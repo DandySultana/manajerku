@@ -88,7 +88,15 @@ export function processInboundVisionOcr(input: VisionOcrReceiveInput) {
   const lower = combinedText.toLowerCase();
 
   // 1. Match SKU from label/caption text or open PO
-  let matchedProduct =
+  const openStorePoProduct = db
+    .prepare(
+      `SELECT product_id FROM purchase_orders
+       WHERE store_id = ? AND status IN ('APPROVED_WA', 'PDF_SENT')
+       ORDER BY approved_at DESC LIMIT 1`
+    )
+    .get(storeId) as { product_id: string } | undefined;
+
+  const matchedProduct =
     allProducts.find(
       (p) =>
         lower.includes(p.name.toLowerCase()) ||
@@ -98,7 +106,11 @@ export function processInboundVisionOcr(input: VisionOcrReceiveInput) {
         (lower.includes("kentang") && p.name.toLowerCase().includes("kentang")) ||
         (lower.includes("dimsum") && p.name.toLowerCase().includes("dimsum")) ||
         (lower.includes("bakso") && p.name.toLowerCase().includes("bakso"))
-    ) || allProducts[0];
+    ) ||
+    (openStorePoProduct
+      ? allProducts.find((p) => p.id === openStorePoProduct.product_id)
+      : undefined) ||
+    allProducts[0];
 
   if (!matchedProduct) {
     throw new ManajerkuAppError(
@@ -195,7 +207,13 @@ export function processInboundVisionOcr(input: VisionOcrReceiveInput) {
 
   return runAtomicTransaction((txDb) => {
     const imageUrl = input.imageUrl || "Foto_Label_Kardus_BekuJaya.jpg";
-    const submitterId = input.submittedByUserId || DEFAULT_OWNER_ID;
+    const storeUser = txDb
+      .prepare(
+        "SELECT id FROM users WHERE store_id = ? ORDER BY CASE WHEN role = 'OWNER' THEN 0 ELSE 1 END LIMIT 1"
+      )
+      .get(storeId) as { id: string } | undefined;
+    const submitterId =
+      input.submittedByUserId || storeUser?.id || DEFAULT_OWNER_ID;
 
     // Exception 1: Blurry photo / confidence < 0.85 (FR-602)
     if (confidenceScore < 0.85) {

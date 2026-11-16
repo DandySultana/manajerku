@@ -1,18 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
+import { resolveVerifiedRequestActor } from "@/lib/auth/request-auth";
 import { writeOffInventoryBatch } from "@/lib/services/fefo-inventory";
 import { ManajerkuAppError, type UserRole } from "@/lib/services/platform-core";
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const actorRole: UserRole =
+    const fallbackRole: UserRole =
       body.actorRole === "CASHIER" || body.actorRole === "ADMIN"
         ? body.actorRole
         : "OWNER";
+    const actor = resolveVerifiedRequestActor(
+      req,
+      body.storeId ? String(body.storeId) : undefined,
+      fallbackRole
+    );
 
     const result = writeOffInventoryBatch({
-      storeId: body.storeId ? String(body.storeId) : undefined,
-      actorRole,
+      storeId: actor.storeId,
+      actorRole: actor.actorRole,
       batchId: String(body.batchId || ""),
       writeOffQtyPacks:
         typeof body.writeOffQtyPacks === "number"

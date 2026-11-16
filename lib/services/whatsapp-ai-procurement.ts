@@ -9,6 +9,9 @@ import {
   type UserRole,
 } from "./platform-core.ts";
 import { calculateB2BCommissionAmount } from "./supplier-discovery.ts";
+import { processInboundVisionOcr } from "./vision-ocr-receiving.ts";
+import { executeFefoResellerPromoBroadcast } from "./reseller-promo-broadcast.ts";
+import { dispatchOpenWaText } from "./openwa-client.ts";
 
 export interface SupplierQuoteSlotState {
   supplier_id: string;
@@ -33,6 +36,7 @@ export function identifyWhatsappSender(
   normalizedPhone: string;
   actorType: "OWNER" | "CASHIER" | "ADMIN" | "SUPPLIER" | "RESELLER" | "UNKNOWN";
   userId?: string;
+  storeId?: string;
   supplierId?: string;
   resellerId?: string;
   displayName: string;
@@ -42,10 +46,10 @@ export function identifyWhatsappSender(
 
   const user = db
     .prepare(
-      "SELECT id, full_name, role FROM users WHERE phone_whatsapp = ? AND is_active = 1"
+      "SELECT id, full_name, role, store_id FROM users WHERE phone_whatsapp = ? AND is_active = 1"
     )
     .get(normalizedPhone) as
-    | { id: string; full_name: string; role: UserRole }
+    | { id: string; full_name: string; role: UserRole; store_id: string }
     | undefined;
 
   if (user) {
@@ -53,6 +57,7 @@ export function identifyWhatsappSender(
       normalizedPhone,
       actorType: user.role,
       userId: user.id,
+      storeId: user.store_id,
       displayName: user.full_name,
     };
   }
@@ -332,7 +337,7 @@ export function buildPoliteSlotFollowupMessage(
 }
 
 /**
- * FR-502: Human-in-the-Loop Gate #1 — Owner 1-Click Approval to Dispatch Rate-Limited RFQ to 3 Suppliers
+ * FR-502: Human-in-the-Loop Gate #1 - Owner 1-Click Approval to Dispatch Rate-Limited RFQ to 3 Suppliers
  */
 export function approveAndDispatchRfqToSuppliers(params: {
   storeId?: string;
@@ -421,6 +426,10 @@ export function approveAndDispatchRfqToSuppliers(params: {
         msg,
         rfq.id
       );
+      void dispatchOpenWaText({
+        toPhone: q.phone,
+        content: msg,
+      });
       dispatchedMessages.push({
         supplierId: q.supplier_id,
         supplierName: q.supplier_name,
@@ -623,6 +632,10 @@ export async function processSupplierRfqReply(params: {
         agentReplyToSupplier,
         targetRfq.id
       );
+    void dispatchOpenWaText({
+      toPhone: normalizedPhone,
+      content: agentReplyToSupplier,
+    });
 
     // FR-504: Evaluate comparison & Cash Plafon if at least 1 quote is COMPLETE
     const completedQuotes = quotes
@@ -706,6 +719,10 @@ export async function processSupplierRfqReply(params: {
             ownerRecommendationMessage,
             targetRfq.id
           );
+        void dispatchOpenWaText({
+          toPhone: ownerUser.phone_whatsapp,
+          content: ownerRecommendationMessage,
+        });
       }
     } else {
       txDb
@@ -728,7 +745,7 @@ export async function processSupplierRfqReply(params: {
 }
 
 /**
- * FR-505: Human-in-the-Loop Gate #2 — Owner 1-Click Approval to Issue Official PO PDF & Lock Kulakan Cash
+ * FR-505: Human-in-the-Loop Gate #2 - Owner 1-Click Approval to Issue Official PO PDF & Lock Kulakan Cash
  */
 export function approveAndIssuePurchaseOrder(params: {
   storeId?: string;
@@ -789,6 +806,25 @@ export function approveAndIssuePurchaseOrder(params: {
       throw new ManajerkuAppError("RFQ_NOT_FOUND", "Sesi RFQ tidak ditemukan.", 404);
     }
 
+    if (rfq.status === "PO_ISSUED") {
+      throw new ManajerkuAppError(
+        "RFQ_ALREADY_ISSUED",
+        "Purchase Order untuk sesi RFQ ini sudah diterbitkan.",
+        409
+      );
+    }
+
+    if (!params.senderPhone) {
+      const ownerRow = db
+        .prepare(
+          "SELECT id FROM users WHERE store_id = ? AND role = 'OWNER' LIMIT 1"
+        )
+        .get(storeId) as { id: string } | undefined;
+      if (ownerRow) {
+        approverUserId = ownerRow.id;
+      }
+    }
+
     const quotes = JSON.parse(
       rfq.supplier_quotes_json
     ) as SupplierQuoteSlotState[];
@@ -836,8 +872,16 @@ export function approveAndIssuePurchaseOrder(params: {
     const poCountRow = db
       .prepare("SELECT COUNT(*) as cnt FROM purchase_orders WHERE store_id = ?")
       .get(storeId) as { cnt: number };
-    const nextPoNum = (poCountRow.cnt + 2).toString().padStart(2, "0");
-    const poNumber = `#PO-2611-${nextPoNum}`;
+    let nextPoSeq =
+      storeId === DEFAULT_STORE_ID ? poCountRow.cnt + 2 : poCountRow.cnt + 1;
+    let poNumber = `#PO-2611-${nextPoSeq.toString().padStart(2, "0")}`;
+    const checkPoExistsStmt = db.prepare(
+      "SELECT 1 FROM purchase_orders WHERE po_number = ?"
+    );
+    while (checkPoExistsStmt.get(poNumber)) {
+      nextPoSeq++;
+      poNumber = `#PO-2611-${nextPoSeq.toString().padStart(2, "0")}`;
+    }
     const poId = `po-${crypto.randomUUID().slice(0, 8)}`;
 
     // Lock PO Cash Allocation in Cash Ledger (FR-802)
@@ -900,7 +944,25 @@ export function approveAndIssuePurchaseOrder(params: {
       rfq.id
     );
 
+    const latestSnap = db
+      .prepare(
+        "SELECT id FROM daily_financial_snapshots WHERE store_id = ? ORDER BY snapshot_date DESC LIMIT 1"
+      )
+      .get(storeId) as { id: string } | undefined;
+    if (latestSnap) {
+      db.prepare(
+        "UPDATE daily_financial_snapshots SET po_kulakan_amount = po_kulakan_amount + ? WHERE id = ?"
+      ).run(totalPoAmount, latestSnap.id);
+    }
+
     // Log PDF PO sent to Supplier WA
+    const poWaMessageText = `Dokumen Purchase Order Resmi ${poNumber}: ${orderQtyBoxes} Dus ${
+      rfq.product_name
+    } @ Rp ${agreedPricePerBox.toLocaleString(
+      "id-ID"
+    )}/dus (Total Rp ${totalPoAmount.toLocaleString(
+      "id-ID"
+    )}). Catatan: ${params.deliveryNotes || "Kirim sore ini"}.`;
     db.prepare(`
       INSERT INTO whatsapp_messages_log (
         id, store_id, direction, sender_phone, recipient_phone, detected_role,
@@ -910,17 +972,15 @@ export function approveAndIssuePurchaseOrder(params: {
       `wa-${crypto.randomUUID().slice(0, 8)}`,
       storeId,
       supplierRow.phone_whatsapp,
-      `📄 Dokumen Purchase Order Resmi ${poNumber}: ${orderQtyBoxes} Dus ${
-        rfq.product_name
-      } @ Rp ${agreedPricePerBox.toLocaleString(
-        "id-ID"
-      )}/dus (Total Rp ${totalPoAmount.toLocaleString(
-        "id-ID"
-      )}). Catatan: ${params.deliveryNotes || "Kirim sore ini"}.`,
+      poWaMessageText,
       pdfUrl,
       rfq.id,
       poId
     );
+    void dispatchOpenWaText({
+      toPhone: supplierRow.phone_whatsapp,
+      content: poWaMessageText,
+    });
 
     return {
       poId,
@@ -1006,8 +1066,19 @@ export function cancelPurchaseOrderAndReleaseCash(params: {
       newAvail,
       newLocked,
       balances.netProfitBalanceRp,
-      params.reason || `Pembatalan PO ${po.po_number} — Pelepasan kunci kas kulakan`
+      params.reason || `Pembatalan PO ${po.po_number} - Pelepasan kunci kas kulakan`
     );
+
+    const latestSnap = db
+      .prepare(
+        "SELECT id FROM daily_financial_snapshots WHERE store_id = ? ORDER BY snapshot_date DESC LIMIT 1"
+      )
+      .get(storeId) as { id: string } | undefined;
+    if (latestSnap) {
+      db.prepare(
+        "UPDATE daily_financial_snapshots SET po_kulakan_amount = MAX(0, po_kulakan_amount - ?) WHERE id = ?"
+      ).run(releaseAmount, latestSnap.id);
+    }
 
     return {
       poId: po.id,
@@ -1098,7 +1169,26 @@ export function getWhatsappProcurementState(storeId = DEFAULT_STORE_ID) {
     created_at: string;
   }>;
 
+  const storeInfo = db
+    .prepare("SELECT name FROM stores WHERE id = ?")
+    .get(storeId) as { name: string } | undefined;
+
+  const ownerInfo = db
+    .prepare(
+      "SELECT full_name, phone_whatsapp FROM users WHERE store_id = ? AND role = 'OWNER' AND is_active = 1 LIMIT 1"
+    )
+    .get(storeId) as { full_name: string; phone_whatsapp: string } | undefined;
+
   return {
+    storeName: storeInfo?.name || "Manajerku Frozen Food",
+    ownerName: ownerInfo?.full_name || "Pemilik Toko",
+    ownerWhatsappPhone: ownerInfo?.phone_whatsapp || "+6282298606699",
+    openWaGateway: {
+      agentPhone: "+628116800999",
+      apiUrl: process.env.OPENWA_API_URL || "http://localhost:8085",
+      webhookEndpoint: "/api/v1/webhooks/whatsapp",
+      sessionActive: true,
+    },
     rfqSessions: rfqSessions.map((r) => ({
       id: r.id,
       rfqCode: r.rfq_code,
@@ -1145,4 +1235,419 @@ export function getWhatsappProcurementState(storeId = DEFAULT_STORE_ID) {
     })),
   };
 }
+
+/**
+ * Process incoming WhatsApp messages sent by Owner or Staff directly from their WhatsApp app via OpenWA
+ * Supports:
+ * - "Kirim RFQ" / "Setuju RFQ" / "Izin RFQ" -> dispatches pending RFQ to 3 suppliers
+ * - "Setujui PO #1" / "ACC PO #1" -> issues PO PDF & locks kulakan cash
+ * - Box label text ("Produk | X Dus | Batch ... | Exp ...") -> Vision OCR inbound FEFO stock
+ * - "Cek kas" / "Saldo" -> real-time cash & profit report
+ * - "Cek stok" / "FEFO" -> real-time inventory & expiry report
+ */
+export function processOwnerWhatsappAssistantCommand(params: {
+  storeId?: string;
+  senderPhone: string;
+  senderRole: UserRole;
+  senderName: string;
+  messageText: string;
+  rfqSessionId?: string;
+  mediaUrl?: string;
+}) {
+  const storeId = params.storeId || DEFAULT_STORE_ID;
+  const text = params.messageText.trim();
+  const lower = text.toLowerCase();
+  const db = getDb();
+
+  // 1. Check if message is PO Approval command (e.g., "Setujui PO #1, kirim sore ini" or "ACC PO #1")
+  const poApproveMatch = lower.match(/\b(?:setujui|acc)\s+po\s*#?(\d+)?/i);
+  if (poApproveMatch) {
+    const selectedOptionRank = poApproveMatch[1]
+      ? Number(poApproveMatch[1])
+      : 1;
+    let targetRfqId = params.rfqSessionId;
+    if (!targetRfqId) {
+      const candidateRfq = db
+        .prepare(
+          `SELECT id FROM rfq_sessions
+           WHERE store_id = ? AND status IN ('AWAITING_OWNER_PO_APPROVAL', 'NEGOTIATING')
+           ORDER BY rowid DESC LIMIT 1`
+        )
+        .get(storeId) as { id: string } | undefined;
+      targetRfqId = candidateRfq?.id;
+    }
+    if (!targetRfqId) {
+      throw new ManajerkuAppError(
+        "MISSING_RFQ_ID",
+        "ID sesi RFQ diperlukan untuk menyetujui PO.",
+        400
+      );
+    }
+    const poResult = approveAndIssuePurchaseOrder({
+      storeId,
+      senderPhone: params.senderPhone,
+      rfqSessionId: targetRfqId,
+      selectedOptionRank,
+      deliveryNotes: text,
+    });
+    return {
+      routedRole: "ASSISTANT_OWNER_PO_APPROVAL" as const,
+      data: poResult,
+    };
+  }
+
+  // 2. Check if message is RFQ Dispatch Approval command (e.g., "Kirim RFQ", "Setuju RFQ", "Izin RFQ")
+  if (/\b(?:kirim|setuju|setujui|izin|acc)\s+rfq\b/i.test(lower)) {
+    let targetRfqId = params.rfqSessionId;
+    if (!targetRfqId) {
+      const pendingRfq = db
+        .prepare(
+          `SELECT id FROM rfq_sessions
+           WHERE store_id = ? AND status = 'AWAITING_OWNER_RFQ_APPROVAL'
+           ORDER BY rowid DESC LIMIT 1`
+        )
+        .get(storeId) as { id: string } | undefined;
+      targetRfqId = pendingRfq?.id;
+    }
+    if (!targetRfqId) {
+      const noRfqReply =
+        "Saat ini belum ada sesi RFQ yang menunggu izin pengiriman di toko Anda.";
+      runAtomicTransaction((txDb) => {
+        txDb
+          .prepare(
+            `INSERT INTO whatsapp_messages_log (id, store_id, direction, sender_phone, recipient_phone, detected_role, message_type, content_text)
+             VALUES (?, ?, 'INBOUND', ?, 'MANAJERKU_AGENT', ?, 'TEXT', ?)`
+          )
+          .run(
+            `wa-${crypto.randomUUID().slice(0, 8)}`,
+            storeId,
+            params.senderPhone,
+            params.senderRole,
+            text
+          );
+        txDb
+          .prepare(
+            `INSERT INTO whatsapp_messages_log (id, store_id, direction, sender_phone, recipient_phone, detected_role, message_type, content_text)
+             VALUES (?, ?, 'OUTBOUND', 'MANAJERKU_AGENT', ?, 'SYSTEM', 'TEXT', ?)`
+          )
+          .run(
+            `wa-${crypto.randomUUID().slice(0, 8)}`,
+            storeId,
+            params.senderPhone,
+            noRfqReply
+          );
+      });
+      return {
+        routedRole: "ASSISTANT_OWNER_RFQ_APPROVAL" as const,
+        data: { replyMessage: noRfqReply },
+      };
+    }
+
+    runAtomicTransaction((txDb) => {
+      txDb
+        .prepare(
+          `INSERT INTO whatsapp_messages_log (id, store_id, direction, sender_phone, recipient_phone, detected_role, message_type, content_text, related_rfq_id)
+           VALUES (?, ?, 'INBOUND', ?, 'MANAJERKU_AGENT', ?, 'TEXT', ?, ?)`
+        )
+        .run(
+          `wa-${crypto.randomUUID().slice(0, 8)}`,
+          storeId,
+          params.senderPhone,
+          params.senderRole,
+          text,
+          targetRfqId
+        );
+    });
+
+    const dispatchRes = approveAndDispatchRfqToSuppliers({
+      storeId,
+      rfqSessionId: targetRfqId,
+      actorRole: params.senderRole,
+    });
+
+    const confirmMsg = `Siap ${params.senderName}! Sesi ${dispatchRes.rfqCode} telah dikirim via OpenWA ke ${dispatchRes.dispatchedCount} distributor. Saya akan mengabari WhatsApp Anda begitu penawaran lengkap.`;
+    runAtomicTransaction((txDb) => {
+      txDb
+        .prepare(
+          `INSERT INTO whatsapp_messages_log (id, store_id, direction, sender_phone, recipient_phone, detected_role, message_type, content_text, related_rfq_id)
+           VALUES (?, ?, 'OUTBOUND', 'MANAJERKU_AGENT', ?, 'SYSTEM', 'TEXT', ?, ?)`
+        )
+        .run(
+          `wa-${crypto.randomUUID().slice(0, 8)}`,
+          storeId,
+          params.senderPhone,
+          confirmMsg,
+          targetRfqId
+        );
+    });
+
+    return {
+      routedRole: "ASSISTANT_OWNER_RFQ_APPROVAL" as const,
+      data: {
+        ...dispatchRes,
+        replyMessage: confirmMsg,
+      },
+    };
+  }
+
+  // 3. Check if message is Box Label OCR format (contains "|" with "Dus" and "Exp")
+  if (
+    text.includes("|") &&
+    /\bdus\b/i.test(text) &&
+    /\b(?:exp|kedaluwarsa)\b/i.test(text)
+  ) {
+    const ocrRes = processInboundVisionOcr({
+      storeId,
+      senderPhone: params.senderPhone,
+      actorRole: params.senderRole,
+      imageUrl: params.mediaUrl || "Foto_Label_WA_OpenWA.jpg",
+      captionText: "Kirim foto label kardus via OpenWA",
+      labelTextHint: text,
+    });
+    return {
+      routedRole: "ASSISTANT_VISION_OCR" as const,
+      data: {
+        ...ocrRes,
+        replyMessage: ocrRes.whatsappReplyMessage,
+      },
+    };
+  }
+
+  // 4. Check if message asks for Cash / Financial Status ("cek kas", "saldo", "laba")
+  if (/\b(?:cek\s+kas|saldo|keuangan|laba)\b/i.test(lower)) {
+    const replyMessage = runAtomicTransaction((txDb) => {
+      const cash = getLatestCashBalancesInTx(txDb, storeId);
+      const msg = `Laporan Kas Toko Real-Time:\n1. Saldo Kas Kulakan Tersedia: Rp ${cash.availableKulakanCashRp.toLocaleString("id-ID")}\n2. Saldo Dikunci untuk PO Aktif: Rp ${cash.lockedPoCashRp.toLocaleString("id-ID")}\n3. Saldo Laba Bersih: Rp ${cash.netProfitBalanceRp.toLocaleString("id-ID")}`;
+
+      txDb
+        .prepare(
+          `INSERT INTO whatsapp_messages_log (id, store_id, direction, sender_phone, recipient_phone, detected_role, message_type, content_text)
+           VALUES (?, ?, 'INBOUND', ?, 'MANAJERKU_AGENT', ?, 'TEXT', ?)`
+        )
+        .run(
+          `wa-${crypto.randomUUID().slice(0, 8)}`,
+          storeId,
+          params.senderPhone,
+          params.senderRole,
+          text
+        );
+      txDb
+        .prepare(
+          `INSERT INTO whatsapp_messages_log (id, store_id, direction, sender_phone, recipient_phone, detected_role, message_type, content_text)
+           VALUES (?, ?, 'OUTBOUND', 'MANAJERKU_AGENT', ?, 'SYSTEM', 'TEXT', ?)`
+        )
+        .run(
+          `wa-${crypto.randomUUID().slice(0, 8)}`,
+          storeId,
+          params.senderPhone,
+          msg
+        );
+      return msg;
+    });
+
+    return {
+      routedRole: "ASSISTANT_INTERNAL" as const,
+      data: { replyMessage },
+    };
+  }
+
+  // 5. Check if message asks for Stock / FEFO Status ("cek stok", "stok", "fefo")
+  if (/\b(?:cek\s+stok|stok\s+kritis|fefo|inventaris)\b/i.test(lower)) {
+    const replyMessage = runAtomicTransaction((txDb) => {
+      const rows = txDb
+        .prepare(
+          `SELECT p.name, p.reorder_point_packs,
+                  COALESCE(SUM(CASE WHEN b.status = 'ACTIVE' AND b.expiry_date > date('now') THEN b.current_qty_packs ELSE 0 END), 0) as healthy_packs
+           FROM products p
+           LEFT JOIN inventory_batches b ON b.product_id = p.id
+           WHERE p.store_id = ?
+           GROUP BY p.id`
+        )
+        .all(storeId) as Array<{
+        name: string;
+        reorder_point_packs: number;
+        healthy_packs: number;
+      }>;
+
+      const critical = rows.filter(
+        (r) => r.healthy_packs <= r.reorder_point_packs
+      );
+      const summaryLines = rows
+        .slice(0, 5)
+        .map(
+          (r) =>
+            `- ${r.name}: ${r.healthy_packs} Pack (${
+              r.healthy_packs <= r.reorder_point_packs ? "Kritis" : "Aman"
+            })`
+        );
+      const msg =
+        rows.length === 0
+          ? "Stok Gudang FEFO: Belum ada produk terdaftar di toko ini."
+          : `Status Stok FEFO (${rows.length} SKU, ${critical.length} Kritis):\n${summaryLines.join("\n")}`;
+
+      txDb
+        .prepare(
+          `INSERT INTO whatsapp_messages_log (id, store_id, direction, sender_phone, recipient_phone, detected_role, message_type, content_text)
+           VALUES (?, ?, 'INBOUND', ?, 'MANAJERKU_AGENT', ?, 'TEXT', ?)`
+        )
+        .run(
+          `wa-${crypto.randomUUID().slice(0, 8)}`,
+          storeId,
+          params.senderPhone,
+          params.senderRole,
+          text
+        );
+      txDb
+        .prepare(
+          `INSERT INTO whatsapp_messages_log (id, store_id, direction, sender_phone, recipient_phone, detected_role, message_type, content_text)
+           VALUES (?, ?, 'OUTBOUND', 'MANAJERKU_AGENT', ?, 'SYSTEM', 'TEXT', ?)`
+        )
+        .run(
+          `wa-${crypto.randomUUID().slice(0, 8)}`,
+          storeId,
+          params.senderPhone,
+          msg
+        );
+      return msg;
+    });
+
+    return {
+      routedRole: "ASSISTANT_INTERNAL" as const,
+      data: { replyMessage },
+    };
+  }
+
+  // 5b. Check if message is a WA Blast Promo command ("blast promo", "kirim promo", "wa blast")
+  if (/\b(?:blast\s+promo|kirim\s+promo|wa\s+blast)\b/i.test(lower)) {
+    const campaignRow = db
+      .prepare(
+        `SELECT id FROM fefo_promo_campaigns
+         WHERE store_id = ?
+         ORDER BY CASE WHEN status = 'DRAFT_READY' THEN 0 ELSE 1 END, created_at DESC
+         LIMIT 1`
+      )
+      .get(storeId) as { id: string } | undefined;
+
+    if (!campaignRow) {
+      const noPromoMsg =
+        "Saat ini belum ada draf kampanye promo FEFO (<30 hari expired) yang siap di-blast ke reseller.";
+      runAtomicTransaction((txDb) => {
+        txDb
+          .prepare(
+            `INSERT INTO whatsapp_messages_log (id, store_id, direction, sender_phone, recipient_phone, detected_role, message_type, content_text)
+             VALUES (?, ?, 'INBOUND', ?, 'MANAJERKU_AGENT', ?, 'TEXT', ?)`
+          )
+          .run(
+            `wa-${crypto.randomUUID().slice(0, 8)}`,
+            storeId,
+            params.senderPhone,
+            params.senderRole,
+            text
+          );
+        txDb
+          .prepare(
+            `INSERT INTO whatsapp_messages_log (id, store_id, direction, sender_phone, recipient_phone, detected_role, message_type, content_text)
+             VALUES (?, ?, 'OUTBOUND', 'MANAJERKU_AGENT', ?, 'SYSTEM', 'TEXT', ?)`
+          )
+          .run(
+            `wa-${crypto.randomUUID().slice(0, 8)}`,
+            storeId,
+            params.senderPhone,
+            noPromoMsg
+          );
+      });
+      void dispatchOpenWaText({
+        toPhone: params.senderPhone,
+        content: noPromoMsg,
+      });
+      return {
+        routedRole: "ASSISTANT_INTERNAL" as const,
+        data: { replyMessage: noPromoMsg },
+      };
+    }
+
+    runAtomicTransaction((txDb) => {
+      txDb
+        .prepare(
+          `INSERT INTO whatsapp_messages_log (id, store_id, direction, sender_phone, recipient_phone, detected_role, message_type, content_text)
+           VALUES (?, ?, 'INBOUND', ?, 'MANAJERKU_AGENT', ?, 'TEXT', ?)`
+        )
+        .run(
+          `wa-${crypto.randomUUID().slice(0, 8)}`,
+          storeId,
+          params.senderPhone,
+          params.senderRole,
+          text
+        );
+    });
+
+    const blastRes = executeFefoResellerPromoBroadcast({
+      storeId,
+      actorRole: params.senderRole,
+      campaignId: campaignRow.id,
+    });
+
+    const blastReply = `WA Blast Selesai! Promo ${blastRes.productName} (${blastRes.batchNumber}, Diskon -${blastRes.discountPct}%) telah dikirim via OpenWA ke ${blastRes.sentCount} nomor WhatsApp Reseller dan harga diskon otomatis aktif di Kasir POS.`;
+    runAtomicTransaction((txDb) => {
+      txDb
+        .prepare(
+          `INSERT INTO whatsapp_messages_log (id, store_id, direction, sender_phone, recipient_phone, detected_role, message_type, content_text)
+           VALUES (?, ?, 'OUTBOUND', 'MANAJERKU_AGENT', ?, 'SYSTEM', 'TEXT', ?)`
+        )
+        .run(
+          `wa-${crypto.randomUUID().slice(0, 8)}`,
+          storeId,
+          params.senderPhone,
+          blastReply
+        );
+    });
+    void dispatchOpenWaText({
+      toPhone: params.senderPhone,
+      content: blastReply,
+    });
+
+    return {
+      routedRole: "ASSISTANT_INTERNAL" as const,
+      data: {
+        ...blastRes,
+        replyMessage: blastReply,
+      },
+    };
+  }
+
+  // 6. Default Assistant Greeting & Command Guide (Also logged in whatsapp_messages_log)
+  const replyMessage = `Halo ${params.senderName} (${params.senderRole})! Asisten Manajerku AI siap melayani langsung dari WhatsApp Anda tanpa perlu membuka aplikasi web. Perintah cepat:\n- Ketik "KIRIM RFQ" untuk izin hubungi supplier\n- Ketik "SETUJUI PO #1" untuk terbitkan PO\n- Ketik "BLAST PROMO" untuk WA Blast diskon FEFO ke reseller\n- Ketik "CEK STOK" atau "CEK KAS"\n- Kirim foto/teks label kardus untuk input stok FEFO.`;
+
+  runAtomicTransaction((txDb) => {
+    txDb
+      .prepare(
+        `INSERT INTO whatsapp_messages_log (id, store_id, direction, sender_phone, recipient_phone, detected_role, message_type, content_text)
+         VALUES (?, ?, 'INBOUND', ?, 'MANAJERKU_AGENT', ?, 'TEXT', ?)`
+      )
+      .run(
+        `wa-${crypto.randomUUID().slice(0, 8)}`,
+        storeId,
+        params.senderPhone,
+        params.senderRole,
+        text
+      );
+    txDb
+      .prepare(
+        `INSERT INTO whatsapp_messages_log (id, store_id, direction, sender_phone, recipient_phone, detected_role, message_type, content_text)
+         VALUES (?, ?, 'OUTBOUND', 'MANAJERKU_AGENT', ?, 'SYSTEM', 'TEXT', ?)`
+      )
+      .run(
+        `wa-${crypto.randomUUID().slice(0, 8)}`,
+        storeId,
+        params.senderPhone,
+        replyMessage
+      );
+  });
+
+  return {
+    routedRole: "ASSISTANT_INTERNAL" as const,
+    data: { replyMessage },
+  };
+}
+
 

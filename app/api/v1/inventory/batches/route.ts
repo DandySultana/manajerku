@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { resolveVerifiedRequestActor } from "@/lib/auth/request-auth";
 import {
   addInventoryBatch,
   listFefoBatches,
@@ -8,13 +9,16 @@ import { ManajerkuAppError } from "@/lib/services/platform-core";
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const storeId = searchParams.get("storeId") || undefined;
+    const actor = resolveVerifiedRequestActor(
+      req,
+      searchParams.get("storeId") || undefined
+    );
     const productId = searchParams.get("productId") || undefined;
     const statusFilter = searchParams.get("status") || undefined;
     const referenceDate = searchParams.get("referenceDate") || undefined;
 
     const batches = listFefoBatches({
-      storeId,
+      storeId: actor.storeId,
       productId,
       statusFilter,
       referenceDate,
@@ -47,8 +51,12 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
+    const actor = resolveVerifiedRequestActor(
+      req,
+      body.storeId ? String(body.storeId) : undefined
+    );
     const created = addInventoryBatch({
-      storeId: body.storeId ? String(body.storeId) : undefined,
+      storeId: actor.storeId,
       productId: String(body.productId || ""),
       batchNumber: String(body.batchNumber || ""),
       qtyBoxes: typeof body.qtyBoxes === "number" ? body.qtyBoxes : undefined,

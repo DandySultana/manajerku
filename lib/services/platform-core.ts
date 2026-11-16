@@ -42,7 +42,10 @@ export class ManajerkuAppError extends Error {
  * Rejects landline numbers (e.g. 0651-...) or malformed strings.
  */
 export function normalizePhoneE164(rawPhone: string): string {
-  const cleaned = rawPhone.replace(/[\s\-().]/g, "");
+  const withoutJid = rawPhone
+    .trim()
+    .replace(/@(c\.us|s\.whatsapp\.net|g\.us)$/i, "");
+  const cleaned = withoutJid.replace(/[\s\-().]/g, "");
   let normalized = cleaned;
   if (normalized.startsWith("08")) {
     normalized = "+628" + normalized.slice(2);
@@ -336,7 +339,7 @@ export function completeStoreOnboarding(input: OnboardingCompleteInput): {
       INSERT INTO daily_financial_snapshots (
         id, store_id, snapshot_date, day_label, pos_revenue_amount,
         po_kulakan_amount, pos_invoice_count, net_profit_amount, freezer_elec_cost
-      ) VALUES (?, ?, ?, ?, 0, 0, 0, 0, ?)
+      ) VALUES (?, ?, ?, ?, 0, 0, 0, 0, 0)
     `);
     for (let i = 0; i < 7; i++) {
       const dateStr = `2026-11-${(10 + i).toString().padStart(2, "0")}`;
@@ -345,7 +348,6 @@ export function completeStoreOnboarding(input: OnboardingCompleteInput): {
         storeId,
         dateStr,
         days[i],
-        dailyElec,
       );
     }
 
@@ -612,9 +614,11 @@ export function deleteStoreUserById(params: {
 
 /**
  * FR-107: Subscription Tier Quota & Feature Gate Enforcer
- * Freemium Starter (Rp0/bln): Max 30 active SKUs, POS multi-unit, basic cash ledger.
- * Manajerku Pro (Rp49.000/bln): Unlimited SKUs, AI Discovery, Auto-RFQ WA, Vision OCR, Reseller Promo, KUR PDF Export.
+ * Disabled (false) while full-feature open testing is active; set true to enforce
+ * Freemium Starter limits (max 30 SKUs & Pro-only AI/OCR/Promo/KUR PDF features).
  */
+export const ENFORCE_SUBSCRIPTION_LIMITS = false;
+
 export function checkSkuQuotaBeforeInsert(storeId = DEFAULT_STORE_ID): {
   allowed: boolean;
   currentSkuCount: number;
@@ -642,7 +646,11 @@ export function checkSkuQuotaBeforeInsert(storeId = DEFAULT_STORE_ID): {
 
   const currentSkuCount = countRow.cnt;
 
-  if (store.subscription_tier === "FREEMIUM_STARTER" && currentSkuCount >= 30) {
+  if (
+    ENFORCE_SUBSCRIPTION_LIMITS &&
+    store.subscription_tier === "FREEMIUM_STARTER" &&
+    currentSkuCount >= 30
+  ) {
     throw new ManajerkuAppError(
       "SUBSCRIPTION_SKU_QUOTA_EXCEEDED",
       "Kuota 30 SKU Paket Freemium Starter telah penuh. Upgrade ke Manajerku Pro (Rp49.000/bulan) untuk SKU FEFO tanpa batas dan fitur Agen AI WhatsApp.",
@@ -653,7 +661,11 @@ export function checkSkuQuotaBeforeInsert(storeId = DEFAULT_STORE_ID): {
   return {
     allowed: true,
     currentSkuCount,
-    maxAllowed: store.subscription_tier === "FREEMIUM_STARTER" ? 30 : null,
+    maxAllowed:
+      ENFORCE_SUBSCRIPTION_LIMITS &&
+      store.subscription_tier === "FREEMIUM_STARTER"
+        ? 30
+        : null,
     tier: store.subscription_tier,
   };
 }
@@ -675,7 +687,10 @@ export function enforceProFeatureAccess(
     );
   }
 
-  if (store.subscription_tier !== "MANAJERKU_PRO") {
+  if (
+    ENFORCE_SUBSCRIPTION_LIMITS &&
+    store.subscription_tier !== "MANAJERKU_PRO"
+  ) {
     throw new ManajerkuAppError(
       "SUBSCRIPTION_PRO_REQUIRED",
       `Fitur ${feature} hanya tersedia pada Paket Manajerku Pro (Rp49.000/bulan). Upgrade paket Anda untuk mengaktifkan Agen AI WhatsApp, Vision OCR, Promo Reseller, dan Ekspor PDF KUR.`,
@@ -895,7 +910,7 @@ export function getCommandCenterSummary(params?: {
     )
     .get(storeId) as { batch_number: string; expiry_date: string } | undefined;
 
-  let closestExpiryDays = 18;
+  let closestExpiryDays: number | null = null;
   if (closestBatch) {
     const refMs = new Date(`${selectedDate}T00:00:00Z`).getTime();
     const expMs = new Date(`${closestBatch.expiry_date}T00:00:00Z`).getTime();
@@ -953,12 +968,13 @@ export function getCommandCenterSummary(params?: {
     )
     .get(storeId) as { total_po: number };
 
-  const activePoTotal = activePoTotalRow.total_po || 6450000;
-  const rawCoverage =
-    activePoTotal > 0
-      ? availableKulakanCash /
-        (activePoTotal > 2025000 ? activePoTotal : 6456521)
-      : 2.3;
+  const hasActivePoCommitment = activePoTotalRow.total_po > 0;
+  const rawCoverage = hasActivePoCommitment
+    ? availableKulakanCash /
+      (activePoTotalRow.total_po > 2025000
+        ? activePoTotalRow.total_po
+        : 6456521)
+    : 0;
   const coverageRatio = Number(rawCoverage.toFixed(1));
 
   // 6. Active Promo Draft & RFQ Info for AI Activity Feed
@@ -1003,6 +1019,10 @@ export function getCommandCenterSummary(params?: {
     )
     .get(storeId) as { cnt: number };
 
+  const resellerCountRow = db
+    .prepare("SELECT COUNT(*) as cnt FROM resellers WHERE store_id = ?")
+    .get(storeId) as { cnt: number };
+
   const tempStable = store.last_recorded_temp_c <= -15.0;
 
   return {
@@ -1020,7 +1040,11 @@ export function getCommandCenterSummary(params?: {
       dailyFreezerElecCost: store.daily_freezer_elec_cost,
       subscriptionTier: store.subscription_tier,
       activeSkuCount: totalSkuCountRow.cnt,
-      maxSkuQuota: store.subscription_tier === "FREEMIUM_STARTER" ? 30 : null,
+      maxSkuQuota:
+        ENFORCE_SUBSCRIPTION_LIMITS &&
+        store.subscription_tier === "FREEMIUM_STARTER"
+          ? 30
+          : null,
     },
     viewerRole,
     permissions,
@@ -1030,8 +1054,13 @@ export function getCommandCenterSummary(params?: {
         // Mask financial balance if viewer is CASHIER (US-102 Scenario 2)
         amountRp: permissions.canViewFinancials ? availableKulakanCash : null,
         lockedPoCashRp: permissions.canViewFinancials ? lockedPoCash : null,
-        plafonStatus:
-          coverageRatio >= 1.5 ? "Plafon PO Aman" : "Plafon PO Ketat",
+        plafonStatus: !hasActivePoCommitment
+          ? availableKulakanCash > 0
+            ? "Plafon Kas Siap"
+            : "Kas Kosong"
+          : coverageRatio >= 1.5
+            ? "Plafon PO Aman"
+            : "Plafon PO Ketat",
         weeklyGrowthPct: `+${weeklyGrowthPct.toFixed(1).replace(".", ",")}%`,
       },
       omzetHarian: {
@@ -1057,8 +1086,10 @@ export function getCommandCenterSummary(params?: {
         belanjaKulakanPoRp: s.po_kulakan_amount,
       })),
       coverageRatio,
-      coverageHealthy: coverageRatio >= 1.5,
-      coverageLabel: `Rasio Kas Kulakan Sehat (Coverage ${coverageRatio.toString().replace(".", ",")}x terhadap PO berjalan)`,
+      coverageHealthy: !hasActivePoCommitment ? availableKulakanCash > 0 : coverageRatio >= 1.5,
+      coverageLabel: !hasActivePoCommitment
+        ? "Belum ada kewajiban PO aktif berjalan (Kas kulakan tersedia)"
+        : `Rasio Kas Kulakan Sehat (Coverage ${coverageRatio.toString().replace(".", ",")}x terhadap PO berjalan)`,
       dailyFreezerElecCostRp: store.daily_freezer_elec_cost,
     },
     aiAndFefoHealth: {
@@ -1074,30 +1105,40 @@ export function getCommandCenterSummary(params?: {
           id: "act-discovery",
           title: `Discovery ${supplierCountRow.cnt} Distributor (★≥4.5)`,
           subtitle: `${supplierCountRow.cnt} distributor rating ≥ 4.5 ditemukan dalam radius ≤ 10 km`,
-          statusLabel: "Selesai",
-          statusType: "SUCCESS",
+          statusLabel: supplierCountRow.cnt > 0 ? "Selesai" : "Belum Ada",
+          statusType: supplierCountRow.cnt > 0 ? "SUCCESS" : "READY",
         },
         {
           id: "act-rfq",
           title: latestRfq
             ? `Multi-Turn RFQ ${latestRfq.supplier_name || latestRfq.product_name}`
-            : "Auto-RFQ Nugget Crispy 500g",
+            : "Belum Ada Auto-RFQ Aktif",
           subtitle: latestRfq?.best_price_per_box
             ? `Penawaran terbaik Rp ${(latestRfq.best_price_per_box / 1000).toFixed(0)}rb/dus`
-            : "Siap negosiasi 4 variabel via WA",
+            : latestRfq
+              ? "Menunggu balasan penawaran supplier via WA"
+              : "Menunggu SKU menyentuh batas minimum stok (ROP)",
           badgeRight: latestRfq?.best_price_per_box
             ? `Rp ${(latestRfq.best_price_per_box / 1000).toFixed(0)}rb/dus`
-            : "Siap",
-          statusLabel: "Aktif",
-          statusType: "ACTIVE",
+            : latestRfq
+              ? "Negosiasi"
+              : "Standby",
+          statusLabel: latestRfq ? "Aktif" : "Standby",
+          statusType: latestRfq ? "ACTIVE" : "READY",
         },
         {
           id: "act-promo",
-          title: latestPromo?.title || "Draf Promo FEFO Sosis (-20%)",
-          subtitle: `Siap kirim ke ${latestPromo?.target_reseller_count ?? 14} Pedagang Reseller`,
+          title: latestPromo?.title || "Belum Ada Draf Promo FEFO",
+          subtitle: latestPromo
+            ? `Siap kirim ke ${latestPromo.target_reseller_count} Pedagang Reseller`
+            : `${resellerCountRow.cnt} Reseller terdaftar • ${priorityFefoBatches + criticalBatches} batch mendekati expired`,
           statusLabel:
-            latestPromo?.status === "ACTIVE_SENT" ? "Terkirim" : "Siap Kirim",
-          statusType: "WARNING",
+            latestPromo?.status === "ACTIVE_SENT"
+              ? "Terkirim"
+              : latestPromo
+                ? "Siap Kirim"
+                : "Aman",
+          statusType: latestPromo ? "WARNING" : "SUCCESS",
         },
         {
           id: "act-ocr",

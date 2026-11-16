@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { resolveVerifiedRequestActor } from "@/lib/auth/request-auth";
 import { executeFefoResellerPromoBroadcast } from "@/lib/services/reseller-promo-broadcast";
 import { ManajerkuAppError, type UserRole } from "@/lib/services/platform-core";
 
@@ -9,14 +10,19 @@ export async function POST(
   try {
     const { id } = await ctx.params;
     const body = await req.json().catch(() => ({}));
-    const actorRole: UserRole =
+    const fallbackRole: UserRole =
       body.actorRole === "CASHIER" || body.actorRole === "ADMIN"
         ? body.actorRole
         : "OWNER";
+    const actor = resolveVerifiedRequestActor(
+      req,
+      body.storeId ? String(body.storeId) : undefined,
+      fallbackRole
+    );
 
     const result = executeFefoResellerPromoBroadcast({
-      storeId: body.storeId ? String(body.storeId) : undefined,
-      actorRole,
+      storeId: actor.storeId,
+      actorRole: actor.actorRole,
       campaignId: id,
       customDiscountPct:
         typeof body.customDiscountPct === "number"

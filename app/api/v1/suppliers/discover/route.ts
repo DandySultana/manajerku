@@ -1,12 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
+import { resolveVerifiedRequestActor } from "@/lib/auth/request-auth";
 import { runHybridSupplierDiscovery } from "@/lib/services/supplier-discovery";
 import { ManajerkuAppError } from "@/lib/services/platform-core";
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
+    const actor = resolveVerifiedRequestActor(
+      req,
+      body.storeId ? String(body.storeId) : undefined
+    );
     const result = await runHybridSupplierDiscovery({
-      storeId: body.storeId ? String(body.storeId) : undefined,
+      storeId: actor.storeId,
       productId: String(body.productId || ""),
       requestedQtyBoxes:
         typeof body.requestedQtyBoxes === "number"

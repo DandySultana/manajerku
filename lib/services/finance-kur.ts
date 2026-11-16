@@ -235,6 +235,36 @@ export function recordDailyFreezerElectricityExpense(params?: {
       `Alokasi Beban Listrik Penyimpanan Dingin 24 Jam (${store.cold_chain_code}) - ${dateStr}`
     );
 
+    const snapUpd = db
+      .prepare(`
+        UPDATE daily_financial_snapshots
+        SET freezer_elec_cost = freezer_elec_cost + ?,
+            net_profit_amount = net_profit_amount - ?
+        WHERE store_id = ? AND snapshot_date = ?
+      `)
+      .run(elecCost, elecCost, storeId, dateStr);
+
+    if (Number(snapUpd.changes) === 0) {
+      const dayNames = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+      const parsedDate = new Date(`${dateStr}T00:00:00Z`);
+      const dayLabel = Number.isNaN(parsedDate.getTime())
+        ? "Min"
+        : dayNames[parsedDate.getUTCDay()];
+      db.prepare(`
+        INSERT INTO daily_financial_snapshots (
+          id, store_id, snapshot_date, day_label, pos_revenue_amount,
+          po_kulakan_amount, pos_invoice_count, net_profit_amount, freezer_elec_cost
+        ) VALUES (?, ?, ?, ?, 0, 0, 0, ?, ?)
+      `).run(
+        `snap-${storeId}-${dateStr.replace(/-/g, "")}`,
+        storeId,
+        dateStr,
+        dayLabel,
+        -elecCost,
+        elecCost
+      );
+    }
+
     return {
       alreadyRecorded: false,
       referenceCode: refCode,
@@ -406,10 +436,79 @@ export function getFinancialLedgerAndKurSummary(params?: {
     )
     .get(storeId) as { total_write_off_loss: number };
 
-  const grossProfit7d = snapAgg.total_net_profit_7d + snapAgg.total_elec_7d;
+  const chartSnapshots = db
+    .prepare(
+      `SELECT snapshot_date, day_label, pos_revenue_amount, po_kulakan_amount,
+              freezer_elec_cost, pos_invoice_count
+       FROM (
+         SELECT snapshot_date, day_label, pos_revenue_amount, po_kulakan_amount,
+                freezer_elec_cost, pos_invoice_count
+         FROM daily_financial_snapshots
+         WHERE store_id = ?
+         ORDER BY snapshot_date DESC
+         LIMIT 7
+       )
+       ORDER BY snapshot_date ASC`
+    )
+    .all(storeId) as Array<{
+    snapshot_date: string;
+    day_label: string;
+    pos_revenue_amount: number;
+    po_kulakan_amount: number;
+    freezer_elec_cost: number;
+    pos_invoice_count: number;
+  }>;
+
+  const firstHalfDays = chartSnapshots.slice(0, 4).filter((d) => d.pos_revenue_amount > 0);
+  const secondHalfDays = chartSnapshots.slice(4).filter((d) => d.pos_revenue_amount > 0);
+  const firstHalfAvg =
+    firstHalfDays.length > 0
+      ? firstHalfDays.reduce((s, d) => s + d.pos_revenue_amount, 0) / firstHalfDays.length
+      : 0;
+  const secondHalfAvg =
+    secondHalfDays.length > 0
+      ? secondHalfDays.reduce((s, d) => s + d.pos_revenue_amount, 0) / secondHalfDays.length
+      : 0;
+  const revenueTrendPct =
+    firstHalfAvg > 0 && secondHalfAvg > 0
+      ? Number((((secondHalfAvg - firstHalfAvg) / firstHalfAvg) * 100).toFixed(1))
+      : null;
+
+  const posDiscountRow = db
+    .prepare(
+      `SELECT COALESCE(SUM(total_discount), 0) as total_disc
+       FROM pos_transactions WHERE store_id = ?`
+    )
+    .get(storeId) as { total_disc: number };
+
+  const periodStartDate =
+    chartSnapshots.length > 0
+      ? chartSnapshots[0].snapshot_date
+      : new Date().toISOString().slice(0, 10);
+  const periodEndDate =
+    chartSnapshots.length > 0
+      ? chartSnapshots[chartSnapshots.length - 1].snapshot_date
+      : periodStartDate;
+
+  const grossProfit7d =
+    snapAgg.total_revenue_7d > 0
+      ? Math.min(
+          snapAgg.total_revenue_7d,
+          Math.max(0, snapAgg.total_net_profit_7d + snapAgg.total_elec_7d)
+        )
+      : 0;
   const totalCogs7d = Math.max(0, snapAgg.total_revenue_7d - grossProfit7d);
   const netOperatingIncome7d =
     grossProfit7d - snapAgg.total_elec_7d - writeOffAgg.total_write_off_loss;
+  const weeklyNetMarginPct =
+    snapAgg.total_revenue_7d > 0
+      ? Number(((netOperatingIncome7d / snapAgg.total_revenue_7d) * 100).toFixed(1))
+      : 0;
+  const totalCogsAndWriteOff = totalCogs7d + writeOffAgg.total_write_off_loss;
+  const wasteLossPct =
+    totalCogsAndWriteOff > 0
+      ? Number(((writeOffAgg.total_write_off_loss / totalCogsAndWriteOff) * 100).toFixed(2))
+      : 0;
 
   // Projected 30-day Monthly P&L for Bank Aceh Syariah / KUR Evaluation
   const monthlyProjectedRevenueRp = Math.round((snapAgg.total_revenue_7d / 7) * 30);
@@ -424,11 +523,12 @@ export function getFinancialLedgerAndKurSummary(params?: {
     monthlyExpiredWriteOffLossRp;
 
   // Coverage Ratio & KUR Eligibility Score (FR-804)
+  const hasLockedPo = balances.lockedPoCashRp > 0;
   const activePoReference =
     balances.lockedPoCashRp > 2025000 ? balances.lockedPoCashRp : 6456521;
-  const coverageRatio = Number(
-    (balances.availableKulakanCashRp / activePoReference).toFixed(1)
-  );
+  const coverageRatio = hasLockedPo
+    ? Number((balances.availableKulakanCashRp / activePoReference).toFixed(1))
+    : 0;
   const netMarginPct =
     monthlyProjectedRevenueRp > 0
       ? Number(
@@ -439,18 +539,31 @@ export function getFinancialLedgerAndKurSummary(params?: {
         )
       : 0;
 
-  const kurEligibilityScore = Math.min(
-    99,
-    Math.max(
-      60,
-      Math.round(
-        72 +
-          (coverageRatio >= 2.0 ? 12 : 6) +
-          (netMarginPct >= 15 ? 8 : 4) +
-          (writeOffAgg.total_write_off_loss === 0 ? 4 : 0)
-      )
+  const verifiedPoCountRow = db
+    .prepare(
+      `SELECT COUNT(*) as cnt FROM purchase_orders WHERE store_id = ? AND status != 'CANCELLED'`
     )
-  );
+    .get(storeId) as { cnt: number };
+
+  const hasOperatingActivity =
+    snapAgg.total_revenue_7d > 0 || verifiedPoCountRow.cnt > 0;
+
+  const kurEligibilityScore = hasOperatingActivity
+    ? Math.min(
+        99,
+        Math.max(
+          60,
+          Math.round(
+            72 +
+              (!hasLockedPo || coverageRatio >= 2.0 ? 12 : 6) +
+              (netMarginPct >= 15 ? 8 : 4) +
+              (writeOffAgg.total_write_off_loss === 0 ? 4 : 0)
+          )
+        )
+      )
+    : balances.availableKulakanCashRp > 0
+      ? 35
+      : 15;
 
   // Max safe monthly KUR installment (35% of Net Operating Income)
   const maxMonthlyInstallmentCapacityRp = Math.max(
@@ -523,20 +636,29 @@ export function getFinancialLedgerAndKurSummary(params?: {
       lockedPoCashRp: balances.lockedPoCashRp,
       netProfitBalanceRp: balances.netProfitBalanceRp,
       coverageRatio,
-      coverageStatusLabel:
-        coverageRatio >= 1.5
+      coverageStatusLabel: !hasLockedPo
+        ? balances.availableKulakanCashRp > 0
+          ? "Belum ada PO terkunci (Kas Siap 100%)"
+          : "Saldo Kas Kosong"
+        : coverageRatio >= 1.5
           ? `Rasio Kas Kulakan Sehat (${coverageRatio}x)`
           : `Rasio Kas Kulakan Ketat (${coverageRatio}x)`,
     },
     profitAndLoss: {
       weekly: {
         revenueRp: snapAgg.total_revenue_7d,
+        salesDiscountRp: posDiscountRow.total_disc,
         cogsRp: totalCogs7d,
         grossProfitRp: grossProfit7d,
         freezerElectricityExpenseRp: snapAgg.total_elec_7d,
         expiredWriteOffLossRp: writeOffAgg.total_write_off_loss,
         netOperatingIncomeRp: netOperatingIncome7d,
+        netMarginPct: weeklyNetMarginPct,
         invoiceCount: snapAgg.total_invoices_7d,
+        revenueTrendPct,
+        wasteLossPct,
+        periodStartDate,
+        periodEndDate,
       },
       monthlyProjected: {
         revenueRp: monthlyProjectedRevenueRp,
@@ -548,12 +670,23 @@ export function getFinancialLedgerAndKurSummary(params?: {
         netMarginPct,
       },
     },
+    chartDays: chartSnapshots.map((s) => ({
+      date: s.snapshot_date,
+      dayLabel: s.day_label,
+      inflowRp: s.pos_revenue_amount,
+      outflowRp: s.po_kulakan_amount + s.freezer_elec_cost,
+      poSpendingRp: s.po_kulakan_amount,
+      freezerElecRp: s.freezer_elec_cost,
+      invoiceCount: s.pos_invoice_count,
+    })),
     kurReadiness: {
       eligibilityScore: kurEligibilityScore,
-      eligibilityStatus:
-        kurEligibilityScore >= 80
+      eligibilityStatus: !hasOperatingActivity
+        ? "BELUM ADA RIWAYAT TRANSAKSI POS / PO"
+        : kurEligibilityScore >= 80
           ? "LAYAK VERIFIKASI KUR / PEMBIAYAAN SYARIAH"
           : "MEMENUHI SYARAT DASAR",
+      hasOperatingActivity,
       targetPartnerBanks: [
         "Bank Aceh Syariah (Pembiayaan Mikro / Modal Kerja)",
         "Penyalur Kredit Usaha Rakyat (KUR) Nasional",
@@ -638,7 +771,7 @@ export function exportKurBankVerificationPackage(params: {
     periodMonths: params.periodMonths || 3,
     integrityHash: `SHA256:${integrityHash}`,
     bankStandardLabel:
-      "Standar Verifikasi Kelayakan Kredit Modal Kerja — Bank Aceh Syariah & Penyalur KUR",
+      "Standar Verifikasi Kelayakan Kredit Modal Kerja - Bank Aceh Syariah & Penyalur KUR",
     report,
   };
 }

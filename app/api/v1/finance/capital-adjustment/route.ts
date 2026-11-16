@@ -1,14 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
+import { resolveVerifiedRequestActor } from "@/lib/auth/request-auth";
 import { recordOwnerCapitalAdjustment } from "@/lib/services/finance-kur";
 import { ManajerkuAppError, type UserRole } from "@/lib/services/platform-core";
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const actorRole: UserRole =
+    const fallbackRole: UserRole =
       body.actorRole === "CASHIER" || body.actorRole === "ADMIN"
         ? body.actorRole
         : "OWNER";
+    const actor = resolveVerifiedRequestActor(
+      req,
+      body.storeId ? String(body.storeId) : undefined,
+      fallbackRole
+    );
 
     const adjustmentType =
       body.adjustmentType === "OWNER_DRAWING" ||
@@ -17,8 +23,8 @@ export async function POST(req: NextRequest) {
         : "PROFIT_REINVESTMENT";
 
     const result = recordOwnerCapitalAdjustment({
-      storeId: body.storeId ? String(body.storeId) : undefined,
-      actorRole,
+      storeId: actor.storeId,
+      actorRole: actor.actorRole,
       adjustmentType,
       amountRp: Number(body.amountRp),
       notes: body.notes ? String(body.notes) : undefined,

@@ -677,7 +677,7 @@ function ensureFefoPromoDraftInTx(
     `Draf Promo FEFO ${productName} (-20%)`,
     promoPackPrice,
     promoBoxPrice,
-    resellerCountRow.cnt || 14,
+    resellerCountRow.cnt,
     `Halo Mitra Kuliner! Promo Cepat FEFO ${productName} Diskon 20% (Rp ${promoPackPrice.toLocaleString(
       "id-ID",
     )}/pack). Tersedia ${qtyPacks} pack, pesan sekarang!`,
@@ -701,9 +701,12 @@ export function listFefoBatches(params?: {
 
   let sql = `
     SELECT b.*, p.name as product_name, p.sku_code, p.packs_per_box,
-           p.retail_unit_name, p.wholesale_unit_name
+           p.retail_unit_name, p.wholesale_unit_name,
+           s.name as supplier_name
     FROM inventory_batches b
     JOIN products p ON p.id = b.product_id
+    LEFT JOIN purchase_orders po ON po.id = b.source_po_id
+    LEFT JOIN suppliers s ON s.id = po.supplier_id
     WHERE b.store_id = ? AND b.current_qty_packs > 0
   `;
   const bindParams: Array<string | number> = [storeId];
@@ -739,6 +742,7 @@ export function listFefoBatches(params?: {
     packs_per_box: number;
     retail_unit_name: string;
     wholesale_unit_name: string;
+    supplier_name: string | null;
   }>;
 
   // Compute per-product FEFO queue rank (1 = Keluarkan Dulu / First Expired First Out)
@@ -766,6 +770,7 @@ export function listFefoBatches(params?: {
       productName: r.product_name,
       skuCode: r.sku_code,
       batchNumber: r.batch_number,
+      supplierName: r.supplier_name || null,
       initialQtyPacks: r.initial_qty_packs,
       currentQtyPacks: r.current_qty_packs,
       wholeBoxes,

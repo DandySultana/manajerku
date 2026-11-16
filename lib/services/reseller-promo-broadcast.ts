@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { getDb, runAtomicTransaction } from "../db/client.ts";
 import { DEFAULT_OWNER_ID, DEFAULT_STORE_ID } from "../db/seed.ts";
 import { calculateDaysToExpiry } from "./fefo-inventory.ts";
+import { dispatchOpenWaText } from "./openwa-client.ts";
 import {
   enforceProFeatureAccess,
   getRolePermissions,
@@ -235,11 +236,21 @@ export function listFefoPromoCampaigns(
     packs_per_box: number;
   }>;
 
+  const liveSubCountRow = db
+    .prepare(
+      "SELECT COUNT(*) as cnt FROM resellers WHERE store_id = ? AND is_promo_subscribed = 1"
+    )
+    .get(storeId) as { cnt: number };
+
   return rows.map((r) => {
     const daysToExpiry = calculateDaysToExpiry(r.expiry_date, referenceDate);
     const capitalAtRiskRp = r.current_qty_packs * r.unit_cogs_pack;
     const projectedRecoveryRp = r.current_qty_packs * r.promo_price_per_pack;
     const isBelowCogsWarning = r.promo_price_per_pack < r.unit_cogs_pack;
+    const effectiveTargetCount =
+      r.status === "DRAFT_READY"
+        ? liveSubCountRow.cnt
+        : r.target_reseller_count;
 
     return {
       id: r.id,
@@ -261,7 +272,7 @@ export function listFefoPromoCampaigns(
       daysToExpiry,
       capitalAtRiskRp,
       projectedRecoveryRp,
-      targetResellerCount: r.target_reseller_count,
+      targetResellerCount: effectiveTargetCount,
       sentCount: r.sent_count,
       messageTemplate: r.message_template,
       status: r.status,
@@ -362,6 +373,13 @@ export function executeFefoResellerPromoBroadcast(params: {
     ).run(discountPct, campaign.batch_id);
 
     // 2. Update campaign status to ACTIVE_SENT
+    const ownerRow = db
+      .prepare(
+        "SELECT id FROM users WHERE store_id = ? AND role = 'OWNER' LIMIT 1"
+      )
+      .get(storeId) as { id: string } | undefined;
+    const approverUserId = ownerRow?.id || DEFAULT_OWNER_ID;
+
     const nowIso = new Date().toISOString();
     db.prepare(`
       UPDATE fefo_promo_campaigns
@@ -380,7 +398,7 @@ export function executeFefoResellerPromoBroadcast(params: {
       promoPriceBox,
       resellers.length,
       resellers.length,
-      DEFAULT_OWNER_ID,
+      approverUserId,
       nowIso,
       campaign.id
     );
@@ -412,6 +430,11 @@ export function executeFefoResellerPromoBroadcast(params: {
         r.phone_whatsapp,
         personalizedMsg
       );
+
+      void dispatchOpenWaText({
+        toPhone: r.phone_whatsapp,
+        content: personalizedMsg,
+      });
 
       return {
         resellerId: r.id,

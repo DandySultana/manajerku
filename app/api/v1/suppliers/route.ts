@@ -4,12 +4,16 @@ import {
   registerVerifiedSupplier,
 } from "@/lib/services/supplier-discovery";
 import { ManajerkuAppError, type UserRole } from "@/lib/services/platform-core";
+import { resolveVerifiedRequestActor } from "@/lib/auth/request-auth";
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const storeId = searchParams.get("storeId") || undefined;
-    const data = listSuppliersDirectory(storeId);
+    const actor = resolveVerifiedRequestActor(
+      req,
+      searchParams.get("storeId") || undefined
+    );
+    const data = listSuppliersDirectory(actor.storeId);
     return NextResponse.json({
       success: true,
       data,
@@ -37,14 +41,19 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const actorRole: UserRole =
+    const fallbackRole: UserRole =
       body.actorRole === "CASHIER" || body.actorRole === "ADMIN"
         ? body.actorRole
         : "OWNER";
+    const actor = resolveVerifiedRequestActor(
+      req,
+      body.storeId ? String(body.storeId) : undefined,
+      fallbackRole
+    );
 
     const created = registerVerifiedSupplier({
-      storeId: body.storeId ? String(body.storeId) : undefined,
-      actorRole,
+      storeId: actor.storeId,
+      actorRole: actor.actorRole,
       name: String(body.name || ""),
       phoneWhatsapp: String(body.phoneWhatsapp || ""),
       address: String(body.address || ""),

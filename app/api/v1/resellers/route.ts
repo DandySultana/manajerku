@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { resolveVerifiedRequestActor } from "@/lib/auth/request-auth";
 import {
   listDownstreamResellers,
   registerDownstreamReseller,
@@ -8,8 +9,11 @@ import { ManajerkuAppError } from "@/lib/services/platform-core";
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const storeId = searchParams.get("storeId") || undefined;
-    const resellers = listDownstreamResellers(storeId);
+    const actor = resolveVerifiedRequestActor(
+      req,
+      searchParams.get("storeId") || undefined
+    );
+    const resellers = listDownstreamResellers(actor.storeId);
     return NextResponse.json({
       success: true,
       data: resellers,
@@ -37,8 +41,12 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
+    const actor = resolveVerifiedRequestActor(
+      req,
+      body.storeId ? String(body.storeId) : undefined
+    );
     const created = registerDownstreamReseller({
-      storeId: body.storeId ? String(body.storeId) : undefined,
+      storeId: actor.storeId,
       businessName: String(body.businessName || ""),
       contactName: String(body.contactName || ""),
       phoneWhatsapp: String(body.phoneWhatsapp || ""),

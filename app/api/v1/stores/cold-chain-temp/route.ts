@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { resolveVerifiedRequestActor } from "@/lib/auth/request-auth";
 import {
   ManajerkuAppError,
   updateColdChainTemperature,
@@ -7,8 +8,12 @@ import {
 export async function PATCH(req: NextRequest) {
   try {
     const body = await req.json();
+    const actor = resolveVerifiedRequestActor(
+      req,
+      body.storeId ? String(body.storeId) : undefined
+    );
     const result = updateColdChainTemperature({
-      storeId: body.storeId ? String(body.storeId) : undefined,
+      storeId: actor.storeId,
       temperatureC: Number(body.temperatureC),
     });
 

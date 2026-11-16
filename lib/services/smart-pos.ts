@@ -394,12 +394,39 @@ export function executePosCheckout(input: PosCheckoutInput) {
       input.paymentMethod === "CASH" ? cashReceived - totalInvoiceAmount : 0;
     const grossProfit = totalInvoiceAmount - totalInvoiceCogs;
 
-    // 6. Generate Invoice Number (#INV-2611-XX)
+    // 6. Generate Globally Unique Invoice Number (#INV-2611-XX)
     const countRow = db
       .prepare("SELECT COUNT(*) as cnt FROM pos_transactions WHERE store_id = ?")
       .get(storeId) as { cnt: number };
-    const nextSeq = 49 + countRow.cnt;
-    const invoiceNumber = `#INV-2611-${nextSeq}`;
+    let nextSeq =
+      storeId === DEFAULT_STORE_ID ? 49 + countRow.cnt : 1 + countRow.cnt;
+    let invoiceNumber = `#INV-2611-${nextSeq.toString().padStart(2, "0")}`;
+    const checkInvExistsStmt = db.prepare(
+      "SELECT 1 FROM pos_transactions WHERE invoice_number = ?"
+    );
+    while (checkInvExistsStmt.get(invoiceNumber)) {
+      nextSeq++;
+      invoiceNumber = `#INV-2611-${nextSeq.toString().padStart(2, "0")}`;
+    }
+
+    const storeInfo = db
+      .prepare("SELECT name, branch_name, address FROM stores WHERE id = ?")
+      .get(storeId) as
+      | { name: string; branch_name: string; address: string }
+      | undefined;
+
+    const storeUser = db
+      .prepare(
+        "SELECT id, full_name, phone_whatsapp FROM users WHERE store_id = ? ORDER BY CASE WHEN role = 'OWNER' THEN 0 ELSE 1 END LIMIT 1"
+      )
+      .get(storeId) as
+      | { id: string; full_name: string; phone_whatsapp: string }
+      | undefined;
+    const resolvedCashierUserId =
+      input.cashierUserId || storeUser?.id || DEFAULT_CASHIER_ID;
+    const resolvedCashierLabel =
+      storeUser?.full_name || input.cashierLabel || "Kasir 01";
+
     const posTxId = `inv-${crypto.randomUUID().slice(0, 8)}`;
     const itemsSummaryText = summaryParts.join(" + ");
 
@@ -415,8 +442,8 @@ export function executePosCheckout(input: PosCheckoutInput) {
       posTxId,
       storeId,
       invoiceNumber,
-      input.cashierUserId || DEFAULT_CASHIER_ID,
-      input.cashierLabel || "Kasir 01",
+      resolvedCashierUserId,
+      resolvedCashierLabel,
       resellerId,
       customerName,
       customerTypeLabel,
@@ -498,13 +525,36 @@ export function executePosCheckout(input: PosCheckoutInput) {
 
     // Update Today's Financial Snapshot for 7-Day Chart & Daily KPI
     const txDate = (input.transactionDate || "2026-11-16").slice(0, 10);
-    db.prepare(`
-      UPDATE daily_financial_snapshots
-      SET pos_revenue_amount = pos_revenue_amount + ?,
-          pos_invoice_count = pos_invoice_count + 1,
-          net_profit_amount = net_profit_amount + ?
-      WHERE store_id = ? AND snapshot_date = ?
-    `).run(totalInvoiceAmount, grossProfit, storeId, txDate);
+    const snapUpd = db
+      .prepare(`
+        UPDATE daily_financial_snapshots
+        SET pos_revenue_amount = pos_revenue_amount + ?,
+            pos_invoice_count = pos_invoice_count + 1,
+            net_profit_amount = net_profit_amount + ?
+        WHERE store_id = ? AND snapshot_date = ?
+      `)
+      .run(totalInvoiceAmount, grossProfit, storeId, txDate);
+
+    if (Number(snapUpd.changes) === 0) {
+      const dayNames = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+      const parsedDate = new Date(`${txDate}T00:00:00Z`);
+      const dayLabel = Number.isNaN(parsedDate.getTime())
+        ? "Min"
+        : dayNames[parsedDate.getUTCDay()];
+      db.prepare(`
+        INSERT INTO daily_financial_snapshots (
+          id, store_id, snapshot_date, day_label, pos_revenue_amount,
+          po_kulakan_amount, pos_invoice_count, net_profit_amount, freezer_elec_cost
+        ) VALUES (?, ?, ?, ?, ?, 0, 1, ?, 0)
+      `).run(
+        `snap-${storeId}-${txDate.replace(/-/g, "")}`,
+        storeId,
+        txDate,
+        dayLabel,
+        totalInvoiceAmount,
+        grossProfit
+      );
+    }
 
     // 8. FR-204: Post-Transaction ROP Evaluation & Auto-Procurement Trigger
     const triggeredRfqSessions: Array<{
@@ -559,7 +609,15 @@ export function executePosCheckout(input: PosCheckoutInput) {
           }>;
 
           const rfqId = `rfq-${crypto.randomUUID().slice(0, 8)}`;
-          const rfqCode = `RFQ-2611-${Math.floor(10 + Math.random() * 89)}`;
+          let rfqSeq = Math.floor(10 + Math.random() * 89);
+          let rfqCode = `RFQ-2611-${rfqSeq}`;
+          const checkRfqStmt = db.prepare(
+            "SELECT 1 FROM rfq_sessions WHERE rfq_code = ?"
+          );
+          while (checkRfqStmt.get(rfqCode)) {
+            rfqSeq++;
+            rfqCode = `RFQ-2611-${rfqSeq}`;
+          }
           const quotesInit = topSuppliers.map((s) => ({
             supplier_id: s.id,
             supplier_name: s.name,
@@ -603,6 +661,12 @@ export function executePosCheckout(input: PosCheckoutInput) {
       transactionId: posTxId,
       invoiceNumber,
       storeId,
+      storeName: storeInfo?.name || "Manajerku Frozen Food",
+      storeBranchName: storeInfo?.branch_name || "Cabang Utama",
+      storeAddress: storeInfo?.address || "Banda Aceh",
+      storePhone: storeUser?.phone_whatsapp || "08116800101",
+      cashierName: resolvedCashierLabel,
+      createdAtIso: new Date().toISOString(),
       customerName,
       customerTypeLabel,
       paymentMethod: input.paymentMethod,

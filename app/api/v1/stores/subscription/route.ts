@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { resolveVerifiedRequestActor } from "@/lib/auth/request-auth";
 import {
   checkSkuQuotaBeforeInsert,
   ManajerkuAppError,
@@ -10,8 +11,11 @@ import {
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const storeId = searchParams.get("storeId") || undefined;
-    const quota = checkSkuQuotaBeforeInsert(storeId);
+    const actor = resolveVerifiedRequestActor(
+      req,
+      searchParams.get("storeId") || undefined
+    );
+    const quota = checkSkuQuotaBeforeInsert(actor.storeId);
     return NextResponse.json({
       success: true,
       data: quota,
@@ -39,18 +43,23 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const actorRole: UserRole =
+    const fallbackRole: UserRole =
       body.actorRole === "CASHIER" || body.actorRole === "ADMIN"
         ? body.actorRole
         : "OWNER";
+    const actor = resolveVerifiedRequestActor(
+      req,
+      body.storeId ? String(body.storeId) : undefined,
+      fallbackRole
+    );
     const targetTier: SubscriptionTier =
       body.targetTier === "FREEMIUM_STARTER"
         ? "FREEMIUM_STARTER"
         : "MANAJERKU_PRO";
 
     const result = updateStoreSubscriptionTier({
-      storeId: body.storeId ? String(body.storeId) : undefined,
-      actorRole,
+      storeId: actor.storeId,
+      actorRole: actor.actorRole,
       targetTier,
     });
 

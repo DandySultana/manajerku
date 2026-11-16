@@ -62,19 +62,22 @@ export default function ResellerPromoView({
   const [phoneWa, setPhoneWa] = useState("");
   const [segment, setSegment] = useState("BURGER");
 
+  const fetchPromoData = useCallback(async () => {
+    const [campRes, resRes] = await Promise.all([
+      fetch(
+        `/api/v1/promos/fefo-drafts?storeId=${encodeURIComponent(
+          activeStoreId,
+        )}`,
+      ),
+      fetch(`/api/v1/resellers?storeId=${encodeURIComponent(activeStoreId)}`),
+    ]);
+    return Promise.all([campRes.json(), resRes.json()]);
+  }, [activeStoreId]);
+
   const loadData = useCallback(async () => {
     try {
       setErrorMsg(null);
-      const [campRes, resRes] = await Promise.all([
-        fetch(
-          `/api/v1/promos/fefo-drafts?storeId=${encodeURIComponent(
-            activeStoreId,
-          )}`,
-        ),
-        fetch(`/api/v1/resellers?storeId=${encodeURIComponent(activeStoreId)}`),
-      ]);
-      const campJson = await campRes.json();
-      const resJson = await resRes.json();
+      const [campJson, resJson] = await fetchPromoData();
       if (campJson.success) setCampaigns(campJson.data);
       if (resJson.success) setResellers(resJson.data);
     } catch (err) {
@@ -86,11 +89,32 @@ export default function ResellerPromoView({
     } finally {
       setLoading(false);
     }
-  }, [activeStoreId]);
+  }, [fetchPromoData]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    let cancelled = false;
+    fetchPromoData()
+      .then(([campJson, resJson]) => {
+        if (cancelled) return;
+        setErrorMsg(null);
+        if (campJson.success) setCampaigns(campJson.data);
+        if (resJson.success) setResellers(resJson.data);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setErrorMsg(
+          err instanceof Error
+            ? err.message
+            : "Gagal memuat data promo reseller.",
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchPromoData]);
 
   const handleBroadcastOneClick = async (campaignId: string) => {
     setBroadcastingId(campaignId);
@@ -203,7 +227,7 @@ export default function ResellerPromoView({
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
             Menyiarkan promo diskon cepat ke pedagang kuliner mikro saat masa
-            simpan batch tersisa &lt; 30 hari — menekan kerugian barang
+            simpan batch tersisa &lt; 30 hari untuk menekan kerugian barang
             kedaluwarsa hingga 85%
           </p>
         </div>
@@ -255,6 +279,23 @@ export default function ResellerPromoView({
         {loading ? (
           <div className="py-8 text-center text-xs text-slate-400">
             Memuat draf promosi FEFO...
+          </div>
+        ) : campaigns.length === 0 ? (
+          <div className="py-10 px-4 text-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 space-y-2">
+            <div className="text-xs font-bold text-slate-700">
+              Belum ada draf atau kampanye promosi FEFO untuk toko ini.
+            </div>
+            <p className="text-[11px] text-slate-500 max-w-md mx-auto">
+              Draf promo otomatis dibuat saat terdapat batch inventaris dengan
+              sisa umur simpan &lt; 30 hari di menu Inventaris FEFO.
+            </p>
+            <button
+              type="button"
+              onClick={() => onNavigateTab("inventory")}
+              className="mt-1 inline-flex items-center px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold cursor-pointer"
+            >
+              Lihat Antrean Batch di Inventaris FEFO
+            </button>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

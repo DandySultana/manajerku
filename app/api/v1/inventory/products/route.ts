@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { resolveVerifiedRequestActor } from "@/lib/auth/request-auth";
 import {
   createMasterProduct,
   listInventoryProducts,
@@ -8,9 +9,12 @@ import { ManajerkuAppError, type UserRole } from "@/lib/services/platform-core";
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const storeId = searchParams.get("storeId") || undefined;
+    const actor = resolveVerifiedRequestActor(
+      req,
+      searchParams.get("storeId") || undefined
+    );
     const referenceDate = searchParams.get("referenceDate") || undefined;
-    const products = listInventoryProducts(storeId, referenceDate);
+    const products = listInventoryProducts(actor.storeId, referenceDate);
     return NextResponse.json({
       success: true,
       data: products,
@@ -38,14 +42,19 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const actorRole: UserRole =
+    const fallbackRole: UserRole =
       body.actorRole === "CASHIER" || body.actorRole === "ADMIN"
         ? body.actorRole
         : "OWNER";
+    const actor = resolveVerifiedRequestActor(
+      req,
+      body.storeId ? String(body.storeId) : undefined,
+      fallbackRole
+    );
 
     const created = createMasterProduct({
-      storeId: body.storeId ? String(body.storeId) : undefined,
-      actorRole,
+      storeId: actor.storeId,
+      actorRole: actor.actorRole,
       skuCode: String(body.skuCode || ""),
       name: String(body.name || ""),
       category: body.category ? String(body.category) : undefined,

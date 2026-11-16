@@ -95,9 +95,9 @@ export async function runHybridSupplierDiscovery(input: DiscoverSuppliersInput) 
   const allCached = db
     .prepare(
       `SELECT * FROM suppliers
-       WHERE is_whatsapp_active = 1 AND google_rating >= ?`
+       WHERE (store_id = ? OR store_id IS NULL) AND is_whatsapp_active = 1 AND google_rating >= ?`
     )
-    .all(minRating) as Array<{
+    .all(storeId, minRating) as Array<{
     id: string;
     google_place_id: string | null;
     name: string;
@@ -149,7 +149,7 @@ export async function runHybridSupplierDiscovery(input: DiscoverSuppliersInput) 
       .filter((c) => c.distanceKm <= radiusLimit);
 
   let matched = evaluateCandidates(maxRadiusKm);
-  let cacheHit = matched.length >= 3 && !input.forceRefreshApi;
+  const cacheHit = matched.length >= 3 && !input.forceRefreshApi;
   let apiCallsMade = 0;
 
   // Step 2: If Shared Cache Miss (< 3 suppliers) or forceRefreshApi, query Google Places Official API (FR-402)
@@ -270,7 +270,15 @@ export async function runHybridSupplierDiscovery(input: DiscoverSuppliersInput) 
   if (input.createRfqDraft !== false && top3Candidates.length > 0) {
     createdRfqSession = runAtomicTransaction((txDb) => {
       const rfqId = `rfq-${crypto.randomUUID().slice(0, 8)}`;
-      const rfqCode = `RFQ-2611-${Math.floor(10 + Math.random() * 89)}`;
+      let rfqSeq = Math.floor(10 + Math.random() * 89);
+      let rfqCode = `RFQ-2611-${rfqSeq}`;
+      const checkRfqStmt = txDb.prepare(
+        "SELECT 1 FROM rfq_sessions WHERE rfq_code = ?"
+      );
+      while (checkRfqStmt.get(rfqCode)) {
+        rfqSeq++;
+        rfqCode = `RFQ-2611-${rfqSeq}`;
+      }
       const quotesPayload = top3Candidates.map((c) => ({
         supplier_id: c.id,
         supplier_name: c.name,
@@ -337,9 +345,10 @@ export function listSuppliersDirectory(storeId = DEFAULT_STORE_ID) {
   const rows = db
     .prepare(
       `SELECT * FROM suppliers
+       WHERE (store_id = ? OR store_id IS NULL) AND is_whatsapp_active = 1
        ORDER BY is_verified_b2b_partner DESC, google_rating DESC, distance_km ASC`
     )
-    .all() as Array<{
+    .all(storeId) as Array<{
     id: string;
     google_place_id: string | null;
     name: string;
@@ -426,6 +435,17 @@ export function registerVerifiedSupplier(params: {
   }
 
   const db = getDb();
+  const existingSupp = db
+    .prepare("SELECT id FROM suppliers WHERE phone_whatsapp = ?")
+    .get(normalizedPhone) as { id: string } | undefined;
+  if (existingSupp) {
+    throw new ManajerkuAppError(
+      "DUPLICATE_SUPPLIER_PHONE",
+      "Nomor WhatsApp distributor ini sudah terdaftar.",
+      409
+    );
+  }
+
   const store = db
     .prepare("SELECT latitude, longitude FROM stores WHERE id = ?")
     .get(storeId) as { latitude: number; longitude: number } | undefined;

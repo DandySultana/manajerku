@@ -250,15 +250,14 @@ export function registerAccountAndStore(input: RegisterAccountInput): {
       INSERT INTO daily_financial_snapshots (
         id, store_id, snapshot_date, day_label, pos_revenue_amount,
         po_kulakan_amount, pos_invoice_count, net_profit_amount, freezer_elec_cost
-      ) VALUES (?, ?, ?, ?, 0, 0, 0, 0, ?)
+      ) VALUES (?, ?, ?, ?, 0, 0, 0, 0, 0)
     `);
     for (let i = 0; i < 7; i++) {
       insertSnap.run(
         `snap-${storeId}-${i}`,
         storeId,
         `2026-11-${(10 + i).toString().padStart(2, "0")}`,
-        days[i],
-        dailyElec
+        days[i]
       );
     }
 

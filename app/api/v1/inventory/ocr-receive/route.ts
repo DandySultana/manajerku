@@ -1,3 +1,4 @@
+import { resolveVerifiedRequestActor } from "@/lib/auth/request-auth";
 import { ManajerkuAppError, type UserRole } from "@/lib/services/platform-core";
 import { processInboundVisionOcr } from "@/lib/services/vision-ocr-receiving";
 import { NextRequest, NextResponse } from "next/server";
@@ -5,14 +6,20 @@ import { NextRequest, NextResponse } from "next/server";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const actorRole: UserRole =
+    const fallbackRole: UserRole =
       body.actorRole === "CASHIER" || body.actorRole === "ADMIN"
         ? body.actorRole
         : "OWNER";
+    const actor = resolveVerifiedRequestActor(
+      req,
+      body.storeId ? String(body.storeId) : undefined,
+      fallbackRole
+    );
 
     const result = processInboundVisionOcr({
-      storeId: body.storeId ? String(body.storeId) : undefined,
-      actorRole,
+      storeId: actor.storeId,
+      actorRole: actor.actorRole,
+      submittedByUserId: actor.userId,
       senderPhone: body.senderPhone ? String(body.senderPhone) : undefined,
       imageUrl: body.imageUrl ? String(body.imageUrl) : undefined,
       captionText: body.captionText ? String(body.captionText) : undefined,

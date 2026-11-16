@@ -7,10 +7,12 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --no-warnings --test tests/*.test.ts"
+    "test": "node --no-warnings --test tests/*.test.ts",
+    "openwa": "node scripts/start-openwa.mjs"
   },
   "dependencies": {
     "next": "16.4.6",
+    "playwright": "^1.65.1",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },

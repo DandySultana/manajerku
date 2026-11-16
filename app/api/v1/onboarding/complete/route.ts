@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createAuthSessionInDb } from "@/lib/auth/auth-service";
+import { setSessionCookieOnResponse } from "@/lib/auth/request-auth";
 import {
   completeStoreOnboarding,
   ManajerkuAppError,
@@ -27,10 +29,20 @@ export async function POST(req: NextRequest) {
       cashierName: body.cashierName ? String(body.cashierName) : undefined,
       cashierPhone: body.cashierPhone ? String(body.cashierPhone) : undefined,
     });
-    return NextResponse.json({
+
+    const session = createAuthSessionInDb({
+      userId: result.ownerUserId,
+      storeId: result.storeId,
+      ipAddress: req.headers.get("x-forwarded-for") || "127.0.0.1",
+      userAgent: req.headers.get("user-agent") || "Manajerku-Onboarding",
+    });
+
+    const res = NextResponse.json({
       success: true,
       data: result,
     });
+    setSessionCookieOnResponse(res, session.rawSessionToken, session.expiresAt);
+    return res;
   } catch (err) {
     if (err instanceof ManajerkuAppError) {
       return NextResponse.json(

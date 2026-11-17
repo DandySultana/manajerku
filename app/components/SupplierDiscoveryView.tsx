@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { formatRp } from "./CommandCenterDashboard";
+import { useGooeyToastFlash } from "./GooeyToastProvider";
 
 interface SupplierDirItem {
   id: string;
@@ -232,6 +233,13 @@ export default function SupplierDiscoveryView({
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  useGooeyToastFlash(
+    feedbackMsg,
+    errorMsg,
+    () => setFeedbackMsg(null),
+    () => setErrorMsg(null)
+  );
+
   // Modals
   const [showScrapingModal, setShowScrapingModal] = useState(false);
   const [scrapingTab, setScrapingTab] = useState<"DISCOVER" | "ADD_SUPPLIER">(
@@ -257,9 +265,14 @@ export default function SupplierDiscoveryView({
   const [playwrightResults, setPlaywrightResults] = useState<
     PlaywrightScrapedItem[]
   >([]);
+  const [lastScrapeMeta, setLastScrapeMeta] = useState<{
+    searchQuery: string;
+    rfqCode: string | null;
+    createdAt: string | null;
+  } | null>(null);
 
   const fetchAllData = useCallback(async () => {
-    const [suppRes, prodRes, waRes, sumRes] = await Promise.all([
+    const [suppRes, prodRes, waRes, sumRes, scrapeRes] = await Promise.all([
       fetch(`/api/v1/suppliers?storeId=${encodeURIComponent(activeStoreId)}`),
       fetch(
         `/api/v1/inventory/products?storeId=${encodeURIComponent(
@@ -274,17 +287,21 @@ export default function SupplierDiscoveryView({
           activeStoreId
         )}&role=${activeRole}`
       ),
+      fetch(
+        `/api/v1/suppliers/scrape?storeId=${encodeURIComponent(activeStoreId)}`
+      ),
     ]);
     return Promise.all([
       suppRes.json(),
       prodRes.json(),
       waRes.json(),
       sumRes.json(),
+      scrapeRes.json(),
     ]);
   }, [activeStoreId, activeRole]);
 
   const applyAllData = useCallback(
-    ([suppJson, prodJson, waJson, sumJson]: Awaited<
+    ([suppJson, prodJson, waJson, sumJson, scrapeJson]: Awaited<
       ReturnType<typeof fetchAllData>
     >) => {
       if (suppJson.success && suppJson.data?.suppliers) {
@@ -330,6 +347,22 @@ export default function SupplierDiscoveryView({
       }
       if (sumJson.success && sumJson.data?.kpis?.kasSiapKulakan) {
         setAvailableCashRp(sumJson.data.kpis.kasSiapKulakan.amountRp);
+      }
+      if (scrapeJson?.success && scrapeJson.data?.scrapedSuppliers) {
+        setPlaywrightResults(
+          scrapeJson.data.scrapedSuppliers as PlaywrightScrapedItem[]
+        );
+        setLastScrapeMeta({
+          searchQuery: scrapeJson.data.searchQuery,
+          rfqCode: scrapeJson.data.rfqCode || null,
+          createdAt: scrapeJson.data.createdAt || null,
+        });
+        if (scrapeJson.data.rawKeyword) {
+          setPlaywrightKeyword(scrapeJson.data.rawKeyword);
+        }
+        if (scrapeJson.data.locationHint) {
+          setPlaywrightLocation(scrapeJson.data.locationHint);
+        }
       }
     },
     [initialTargetProductId, onClearInitialTargetProduct]
@@ -414,6 +447,11 @@ export default function SupplierDiscoveryView({
         const list = (json.data.scrapedSuppliers ||
           []) as PlaywrightScrapedItem[];
         setPlaywrightResults(list);
+        setLastScrapeMeta({
+          searchQuery: json.data.searchQuery || playwrightKeyword.trim(),
+          rfqCode: json.data.createdRfqSession?.rfqCode || null,
+          createdAt: new Date().toISOString(),
+        });
         setShowScrapingModal(false);
         const rfqCodeLabel = json.data.createdRfqSession?.rfqCode
           ? ` (${json.data.createdRfqSession.rfqCode})`
@@ -690,6 +728,19 @@ export default function SupplierDiscoveryView({
     });
   }
 
+  // Sort all candidate suppliers by highest rating first (then review count, then distance)
+  rawMergedCandidates.sort((a, b) => {
+    if (b.googleRating !== a.googleRating) {
+      return b.googleRating - a.googleRating;
+    }
+    const revA = a.userRatingsTotal ?? 0;
+    const revB = b.userRatingsTotal ?? 0;
+    if (revB !== revA) {
+      return revB - revA;
+    }
+    return (a.distanceKm ?? 999) - (b.distanceKm ?? 999);
+  });
+
   const top3Candidates = rawMergedCandidates.slice(0, 3).map((entry, idx) => {
     const pricePerBox =
       entry.quote?.slot_price_per_box ?? entry.catEntry?.price_per_box ?? null;
@@ -843,79 +894,8 @@ export default function SupplierDiscoveryView({
         </div>
       </div>
 
-      {feedbackMsg && (
-        <div
-          role="status"
-          className="bg-[#EBF8F2] border border-[#CCE8DB] text-[#0F6352] px-4 py-3 rounded-xl text-xs font-semibold flex items-center justify-between gap-2"
-        >
-          <span>{feedbackMsg}</span>
-          <button
-            type="button"
-            aria-label="Tutup pesan status"
-            onClick={() => setFeedbackMsg(null)}
-            className="min-h-[44px] min-w-[44px] sm:min-h-[36px] sm:min-w-[36px] rounded-lg hover:bg-[#D7F0E6] font-bold flex items-center justify-center"
-          >
-            ✕
-          </button>
-        </div>
-      )}
-
-      {errorMsg && (
-        <div
-          role="alert"
-          className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-xl text-xs font-semibold flex items-center justify-between gap-2"
-        >
-          <span>{errorMsg}</span>
-          <button
-            type="button"
-            aria-label="Tutup pesan galat"
-            onClick={() => setErrorMsg(null)}
-            className="min-h-[44px] min-w-[44px] sm:min-h-[36px] sm:min-w-[36px] rounded-lg hover:bg-red-100 text-red-700 font-bold flex items-center justify-center"
-          >
-            ✕
-          </button>
-        </div>
-      )}
-
       {/* Playwright Real-Time Business & Factory Phone Number Scraper Card */}
       <section className="bg-white rounded-2xl border border-[#E2E8F0] p-5 shadow-[0_1px_3px_rgba(15,23,42,0.03)] space-y-4 text-xs">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-[#F1F5F9]">
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-[15px] font-bold text-[#0F172A]">
-                Playwright Web Scraper: Cari Nomor HP Pabrik &amp; Distributor
-              </h2>
-              <span className="px-2.5 py-0.5 rounded-full bg-[#D7F0E6] text-[#0F6352] text-[11px] font-semibold">
-                Playwright Chromium Engine
-              </span>
-            </div>
-            <p className="text-xs text-[#64748B] mt-0.5">
-              Ekstraksi otomatis nama bisnis/pabrik, nomor HP/WhatsApp aktif
-              (08xx / +628xx), rating, dan alamat langsung dari Google Maps
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-            <span className="text-[11px] text-[#64748B] mr-1">Contoh:</span>
-            {["kulit kebab", "pabrik sosis", "distributor nugget", "pabrik dimsum"].map(
-              (kw) => (
-                <button
-                  key={kw}
-                  type="button"
-                  onClick={() => setPlaywrightKeyword(kw)}
-                  className={`px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-colors ${
-                    playwrightKeyword.toLowerCase() === kw
-                      ? "bg-[#D7F0E6] border-[#0F6352]/30 text-[#0F6352] font-semibold"
-                      : "bg-[#F8FAFC] hover:bg-[#F1F5F9] border-[#E2E8F0] text-[#334155]"
-                  }`}
-                >
-                  {kw}
-                </button>
-              )
-            )}
-          </div>
-        </div>
-
         <form
           onSubmit={handleRunPlaywrightScrape}
           className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end"
@@ -971,78 +951,97 @@ export default function SupplierDiscoveryView({
         </form>
 
         {playwrightResults.length > 0 && (
-          <div className="pt-2 space-y-2">
-            <div className="flex items-center justify-between text-[11px] font-semibold text-[#0F6352]">
-              <span>
-                Hasil Ekstraksi Playwright ({playwrightResults.length} Supplier
-                Ditemukan &amp; Otomatis Dihubungi Agen OpenWA)
-              </span>
+          <div className="pt-3 border-t border-[#F1F5F9] space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-xs font-bold text-[#0F172A]">
+                  Daftar Pabrik &amp; Supplier Hasil Scraping ({playwrightResults.length} Bisnis)
+                </h3>
+                {lastScrapeMeta?.searchQuery && (
+                  <span className="px-2.5 py-0.5 rounded-full bg-[#F1F5F9] text-[#475569] text-[11px] font-medium">
+                    Kata kunci: {lastScrapeMeta.searchQuery}
+                  </span>
+                )}
+              </div>
             </div>
-            <div className="overflow-x-auto rounded-xl border border-[#E2E8F0]">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-[#F8FAFC] border-b border-[#E2E8F0] text-[11px] font-semibold text-[#64748B]">
-                    <th className="py-2.5 px-3">Nama Pabrik / Bisnis</th>
-                    <th className="py-2.5 px-3">Nomor HP / WhatsApp</th>
-                    <th className="py-2.5 px-3">Rating</th>
-                    <th className="py-2.5 px-3">Kategori &amp; Alamat</th>
-                    <th className="py-2.5 px-3">Status OpenWA</th>
-                    <th className="py-2.5 px-3 text-right">Aksi Cepat</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#F1F5F9]">
-                  {playwrightResults.map((item) => (
-                    <tr
-                      key={item.id}
-                      className="hover:bg-[#F8FAFC]/80 transition-colors"
-                    >
-                      <td className="py-2.5 px-3 font-semibold text-[#0F172A]">
+
+            <div className="rounded-2xl border border-[#E2E8F0] bg-white divide-y divide-[#E5E9EC] overflow-hidden">
+              {playwrightResults.map((item, idx) => (
+                <div
+                  key={item.id}
+                  className="p-4 hover:bg-[#F8FAFC] transition-colors flex flex-col md:flex-row md:items-center justify-between gap-3.5"
+                >
+                  {/* Left: Rank + Factory Name + Rating + Address */}
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={`px-2 py-0.5 rounded-md text-[11px] font-bold tabular-nums shrink-0 ${
+                          idx < 3
+                            ? "bg-[#0F6352] text-white"
+                            : "bg-[#F1F5F9] text-[#475569]"
+                        }`}
+                      >
+                        #{idx + 1}
+                      </span>
+                      <span className="text-sm font-bold text-[#0F172A]">
                         {item.name}
-                      </td>
-                      <td className="py-2.5 px-3 font-mono font-semibold text-[#0F6352]">
-                        {item.phoneWhatsapp}{" "}
-                        <span className="text-[10.5px] font-normal text-[#64748B]">
-                          ({item.rawPhoneDisplay})
+                      </span>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200/80 text-[11px] font-semibold text-amber-800 shrink-0">
+                        <span aria-hidden="true">★</span>
+                        <span>
+                          {item.googleRating.toFixed(1)} ({item.userRatingsTotal} ulasan)
                         </span>
-                      </td>
-                      <td className="py-2.5 px-3 tabular-nums text-[#334155]">
-                        {item.googleRating} ({item.userRatingsTotal} ulasan)
-                      </td>
-                      <td className="py-2.5 px-3 text-[#475569] max-w-[240px] truncate">
-                        {item.category} • {item.address}
-                      </td>
-                      <td className="py-2.5 px-3 whitespace-nowrap">
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#D7F0E6] text-[#0F6352] text-[11px] font-semibold">
-                          <span>✓ Dihubungi OpenWA</span>
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-3 text-right space-x-2 whitespace-nowrap">
-                        <a
-                          href={`https://wa.me/${item.phoneWhatsapp.replace(
-                            /\D/g,
-                            ""
-                          )}?text=${encodeURIComponent(
-                            `Halo ${item.name}, kami ingin menanyakan harga grosir ${playwrightKeyword}.`
-                          )}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex px-2.5 py-1 rounded-lg bg-[#D7F0E6] hover:bg-[#C2E8D8] text-[#0F6352] text-[11px] font-semibold transition-colors"
-                        >
-                          Chat WA
-                        </a>
-                        <a
-                          href={item.mapsUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex px-2.5 py-1 rounded-lg bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#334155] text-[11px] font-medium transition-colors"
-                        >
-                          Maps
-                        </a>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full bg-[#F1F5F9] text-[#475569] text-[11px] font-medium shrink-0">
+                        {item.distanceKm.toFixed(1).replace(".", ",")} km
+                      </span>
+                    </div>
+
+                    <div className="text-xs text-[#475569] leading-relaxed">
+                      <span className="font-semibold text-[#334155]">
+                        {item.category}
+                      </span>
+                      {item.address ? ` • ${item.address}` : ""}
+                    </div>
+                  </div>
+
+                  {/* Right: WhatsApp Number + Status + Quick Actions */}
+                  <div className="flex flex-wrap items-center justify-between md:justify-end gap-2.5 shrink-0">
+                    <div className="flex flex-col md:items-end">
+                      <span className="font-mono text-xs font-bold text-[#0F6352]">
+                        {item.phoneWhatsapp}
+                      </span>
+                      <span className="text-[11px] text-[#64748B]">
+                        Dihubungi Agen OpenWA
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <a
+                        href={`https://wa.me/${item.phoneWhatsapp.replace(
+                          /\D/g,
+                          ""
+                        )}?text=${encodeURIComponent(
+                          `Halo ${item.name}, kami ingin menanyakan harga grosir ${playwrightKeyword}.`
+                        )}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="min-h-[38px] px-3 py-1.5 rounded-xl bg-[#0F6352] hover:bg-[#0B4F41] text-white text-xs font-semibold inline-flex items-center justify-center transition-colors"
+                      >
+                        Chat WA
+                      </a>
+                      <a
+                        href={item.mapsUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="min-h-[38px] px-3 py-1.5 rounded-xl bg-white hover:bg-[#F1F5F9] border border-[#CBD5E1] text-[#334155] text-xs font-semibold inline-flex items-center justify-center transition-colors"
+                      >
+                        Maps
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         )}
@@ -1394,22 +1393,6 @@ export default function SupplierDiscoveryView({
               >
                 Validasi Kas &amp; Persetujuan PO
               </h2>
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#EBF8F2] border border-[#CCE8DB] text-[#0F6352] text-[11px] font-semibold shrink-0">
-                <svg
-                  aria-hidden="true"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.9"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="w-3.5 h-3.5"
-                >
-                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
-                  <path d="m9 12 2 2 4-4" />
-                </svg>
-                <span>Human-in-the-Loop</span>
-              </span>
             </div>
 
             {/* Cash Plafon Validation Box */}

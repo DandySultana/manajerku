@@ -345,6 +345,17 @@ export async function scrapeSuppliersWithPlaywright(
     }
   }
 
+  // Sort scraped candidates strictly by highest rating first, then review count, then shortest distance
+  scrapedCandidates.sort((a, b) => {
+    if (b.googleRating !== a.googleRating) {
+      return b.googleRating - a.googleRating;
+    }
+    if (b.userRatingsTotal !== a.userRatingsTotal) {
+      return b.userRatingsTotal - a.userRatingsTotal;
+    }
+    return a.distanceKm - b.distanceKm;
+  });
+
   // Persist scraped businesses into SQLite suppliers table for this store
   runAtomicTransaction((txDb) => {
     for (const c of scrapedCandidates) {
@@ -555,13 +566,85 @@ export async function scrapeSuppliersWithPlaywright(
     });
   }
 
+  // Save latest scrape batch so UI survives page refresh
+  db.prepare(
+    `INSERT INTO playwright_scrape_runs (
+      id, store_id, search_query, raw_keyword, location_hint, rfq_code, results_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    `pwrun-${crypto.randomUUID().slice(0, 8)}`,
+    storeId,
+    fullQuery,
+    rawKeyword,
+    input.locationHint?.trim() || null,
+    createdRfqSession?.rfqCode || null,
+    JSON.stringify(scrapedCandidates)
+  );
+
   return {
     storeId,
     searchQuery: fullQuery,
     rawKeyword,
+    locationHint: input.locationHint?.trim() || null,
     scrapedCount: scrapedCandidates.length,
     openWaAutoContactedCount: createdRfqSession?.dispatchedCount ?? 0,
     scrapedSuppliers: scrapedCandidates,
     createdRfqSession,
+  };
+}
+
+export function getLatestPlaywrightScrapeRun(storeId = DEFAULT_STORE_ID) {
+  const db = getDb();
+  const row = db
+    .prepare(
+      `SELECT id, store_id, search_query, raw_keyword, location_hint, rfq_code, results_json, created_at
+       FROM playwright_scrape_runs
+       WHERE store_id = ?
+       ORDER BY rowid DESC
+       LIMIT 1`
+    )
+    .get(storeId) as
+    | {
+        id: string;
+        store_id: string;
+        search_query: string;
+        raw_keyword: string;
+        location_hint: string | null;
+        rfq_code: string | null;
+        results_json: string;
+        created_at: string;
+      }
+    | undefined;
+
+  if (!row) {
+    return null;
+  }
+
+  let parsed: ScrapedBusinessCandidate[] = [];
+  try {
+    parsed = JSON.parse(row.results_json) as ScrapedBusinessCandidate[];
+  } catch {
+    parsed = [];
+  }
+
+  parsed.sort((a, b) => {
+    if (b.googleRating !== a.googleRating) {
+      return b.googleRating - a.googleRating;
+    }
+    if (b.userRatingsTotal !== a.userRatingsTotal) {
+      return b.userRatingsTotal - a.userRatingsTotal;
+    }
+    return a.distanceKm - b.distanceKm;
+  });
+
+  return {
+    id: row.id,
+    storeId: row.store_id,
+    searchQuery: row.search_query,
+    rawKeyword: row.raw_keyword,
+    locationHint: row.location_hint,
+    rfqCode: row.rfq_code,
+    createdAt: row.created_at,
+    scrapedSuppliers: parsed,
   };
 }

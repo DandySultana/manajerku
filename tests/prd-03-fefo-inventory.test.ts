@@ -6,7 +6,6 @@ import {
   addInventoryBatch,
   createMasterProduct,
   evaluateStoreFefoRadar,
-  listFefoBatches,
   listInventoryProducts,
   writeOffInventoryBatch,
 } from "../lib/services/fefo-inventory.ts";

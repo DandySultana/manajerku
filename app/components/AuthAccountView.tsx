@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { useGooeyToastFlash } from "./GooeyToastProvider";
 
 export interface AuthSessionData {
   sessionId: string;
@@ -33,6 +34,13 @@ export default function AuthAccountView({
   const [loading, setLoading] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  useGooeyToastFlash(
+    feedbackMsg,
+    errorMsg,
+    () => setFeedbackMsg(null),
+    () => setErrorMsg(null)
+  );
 
   const [profName, setProfName] = useState(currentSession.fullName);
   const [profEmail, setProfEmail] = useState(currentSession.email || "");
@@ -138,18 +146,6 @@ export default function AuthAccountView({
           Keluar / Logout Sesi
         </button>
       </div>
-
-      {feedbackMsg && (
-        <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 px-4 py-3 rounded-xl text-xs font-semibold">
-          ✓ {feedbackMsg}
-        </div>
-      )}
-
-      {errorMsg && (
-        <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-xl text-xs font-semibold">
-          ⚠️ {errorMsg}
-        </div>
-      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
         <form

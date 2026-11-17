@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import { formatRp } from "./CommandCenterDashboard";
+import { useGooeyToastFlash } from "./GooeyToastProvider";
 
 interface SupplierQuoteItem {
   supplier_id: string;
@@ -147,6 +148,13 @@ export default function WhatsappAgentOcrView({
   const [loading, setLoading] = useState(true);
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  useGooeyToastFlash(
+    feedbackMsg,
+    errorMsg,
+    () => setFeedbackMsg(null),
+    () => setErrorMsg(null)
+  );
 
   // Unified OpenWA Simulator State (Owner Phone vs Supplier Phone)
   const [simActorMode, setSimActorMode] = useState<"OWNER" | "SUPPLIER">(
@@ -549,78 +557,6 @@ export default function WhatsappAgentOcrView({
             </div>
           </div>
         </form>
-      )}
-
-      {/* OpenWA Connection & Command Guide Strip */}
-      <div className="bg-white rounded-2xl border border-[#E2E8F0] p-4 shadow-[0_1px_3px_rgba(15,23,42,0.03)] flex flex-col lg:flex-row lg:items-center justify-between gap-4 text-xs">
-        <div className="space-y-1">
-          <div className="font-bold text-[#0F172A] text-[13px] flex flex-wrap items-center gap-2">
-            <span>Alur OpenWA Tanpa Buka Aplikasi Web</span>
-            <span className="px-2 py-0.5 rounded-full bg-[#D7F0E6] text-[#0F6352] text-[11px] font-semibold">
-              WA Owner Terdaftar: {ownerName} ({ownerWhatsappPhone})
-            </span>
-          </div>
-          <p className="text-[#64748B]">
-            Nomor khusus aplikasi (<strong>{openWaAgentPhone}</strong>) otomatis
-            mengenali nomor WhatsApp Owner dan melayani perintah langsung dari
-            chat WhatsApp HP:
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-          <span className="px-2.5 py-1 rounded-lg bg-[#F8FAFC] border border-[#E2E8F0] font-mono text-[11px] text-[#334155]">
-            &quot;KIRIM RFQ&quot;
-          </span>
-          <span className="px-2.5 py-1 rounded-lg bg-[#F8FAFC] border border-[#E2E8F0] font-mono text-[11px] text-[#334155]">
-            &quot;SETUJUI PO #1&quot;
-          </span>
-          <span className="px-2.5 py-1 rounded-lg bg-[#F8FAFC] border border-[#E2E8F0] font-mono text-[11px] text-[#334155]">
-            &quot;BLAST PROMO&quot;
-          </span>
-          <span className="px-2.5 py-1 rounded-lg bg-[#F8FAFC] border border-[#E2E8F0] font-mono text-[11px] text-[#334155]">
-            &quot;CEK STOK&quot;
-          </span>
-          <span className="px-2.5 py-1 rounded-lg bg-[#F8FAFC] border border-[#E2E8F0] font-mono text-[11px] text-[#334155]">
-            &quot;CEK KAS&quot;
-          </span>
-          <span className="px-2.5 py-1 rounded-lg bg-[#F8FAFC] border border-[#E2E8F0] font-mono text-[11px] text-[#334155]">
-            Foto Label Kardus
-          </span>
-        </div>
-      </div>
-
-      {feedbackMsg && (
-        <div
-          role="status"
-          className="bg-[#EEFBF4] border border-[#B8EBD0] text-[#0F6352] px-4 py-3 rounded-xl text-xs font-medium flex items-center justify-between gap-3"
-        >
-          <span>{feedbackMsg}</span>
-          <button
-            type="button"
-            onClick={() => setFeedbackMsg(null)}
-            className="text-[#0F6352] hover:text-[#0B4F41] font-bold px-1.5 py-0.5 rounded-lg"
-            aria-label="Tutup notifikasi"
-          >
-            ✕
-          </button>
-        </div>
-      )}
-
-      {errorMsg && (
-        <div
-          role="alert"
-          className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-xs font-medium flex items-center justify-between gap-3"
-        >
-          <span>{errorMsg}</span>
-          <button
-            type="button"
-            onClick={() => setErrorMsg(null)}
-            className="text-red-700 hover:text-red-900 font-bold px-1.5 py-0.5 rounded-lg"
-            aria-label="Tutup pesan error"
-          >
-            ✕
-          </button>
-        </div>
       )}
 
       {/* Main Split: Left 7 Cols (Live RFQ Monitor + OpenWA Simulator) + Right 5 Cols (OpenWA Live Chat Stream) */}

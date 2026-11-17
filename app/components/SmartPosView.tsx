@@ -1,7 +1,9 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import { formatRp } from "./CommandCenterDashboard";
+import { useGooeyToastFlash } from "./GooeyToastProvider";
 
 interface PosCatalogProduct {
   id: string;
@@ -151,12 +153,21 @@ export default function SmartPosView({
   const [resellerPickerOpen, setResellerPickerOpen] = useState(false);
   const [payUiOption, setPayUiOption] = useState<PayUiOption>("QRIS");
   const [cashReceivedInput, setCashReceivedInput] = useState<string>("");
+  const [qrisImageUrl, setQrisImageUrl] = useState<string | null>(null);
+  const [qrisUploading, setQrisUploading] = useState(false);
+  const [qrisUploadError, setQrisUploadError] = useState<string | null>(null);
+  const [showQrisModal, setShowQrisModal] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  useGooeyToastFlash(null, errorMsg, undefined, () => setErrorMsg(null));
+  useGooeyToastFlash(null, qrisUploadError, undefined, () =>
+    setQrisUploadError(null),
+  );
   const [receiptModal, setReceiptModal] = useState<CheckoutReceiptData | null>(
-    null
+    null,
   );
   const [measuredReceiptHeightMm, setMeasuredReceiptHeightMm] = useState<
     number | null
@@ -165,23 +176,25 @@ export default function SmartPosView({
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const filterMenuRef = useRef<HTMLDivElement | null>(null);
   const resellerMenuRef = useRef<HTMLDivElement | null>(null);
+  const qrisFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadCatalog = useCallback(async () => {
     try {
       setErrorMsg(null);
       const res = await fetch(
-        `/api/v1/pos/catalog?storeId=${encodeURIComponent(activeStoreId)}`
+        `/api/v1/pos/catalog?storeId=${encodeURIComponent(activeStoreId)}`,
       );
       const json = await res.json();
       if (json.success) {
         setProducts(json.data.products);
         setResellers(json.data.resellers);
+        setQrisImageUrl(json.data.storeQrisImageUrl || null);
       } else {
         setErrorMsg(json.error?.message || "Gagal memuat katalog POS.");
       }
     } catch (err) {
       setErrorMsg(
-        err instanceof Error ? err.message : "Gagal memuat katalog POS."
+        err instanceof Error ? err.message : "Gagal memuat katalog POS.",
       );
     } finally {
       setLoading(false);
@@ -197,10 +210,11 @@ export default function SmartPosView({
         if (json.success) {
           setProducts(json.data.products);
           setResellers(json.data.resellers);
+          setQrisImageUrl(json.data.storeQrisImageUrl || null);
           if (json.data.resellers?.length > 0) {
             const preferred =
               json.data.resellers.find(
-                (r: ResellerOption) => r.id === "reseller-01"
+                (r: ResellerOption) => r.id === "reseller-01",
               ) || json.data.resellers[0];
             setSelectedResellerId((prev) => prev || preferred.id);
           }
@@ -211,7 +225,7 @@ export default function SmartPosView({
       .catch((err) => {
         if (cancelled) return;
         setErrorMsg(
-          err instanceof Error ? err.message : "Gagal memuat katalog POS."
+          err instanceof Error ? err.message : "Gagal memuat katalog POS.",
         );
       })
       .finally(() => {
@@ -232,14 +246,12 @@ export default function SmartPosView({
         setFilterMenuOpen(false);
         setResellerPickerOpen(false);
         setReceiptModal(null);
+        setShowQrisModal(false);
       }
     };
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as Node;
-      if (
-        filterMenuRef.current &&
-        !filterMenuRef.current.contains(target)
-      ) {
+      if (filterMenuRef.current && !filterMenuRef.current.contains(target)) {
         setFilterMenuOpen(false);
       }
       if (
@@ -264,13 +276,13 @@ export default function SmartPosView({
         (sum, c) =>
           sum +
           (c.soldUnitType === "BOX" ? c.soldQty * c.packsPerBox : c.soldQty),
-        0
+        0,
       );
   };
 
   const handleAddToCart = (
     prod: PosCatalogProduct,
-    unitType: "PACK" | "BOX"
+    unitType: "PACK" | "BOX",
   ) => {
     setErrorMsg(null);
     const additionalPacks = unitType === "BOX" ? prod.packsPerBox : 1;
@@ -279,13 +291,13 @@ export default function SmartPosView({
     if (currentPacksInCart + additionalPacks > prod.totalHealthyPacks) {
       if (prod.expiredBlockedPacks > 0 && prod.totalHealthyPacks === 0) {
         setErrorMsg(
-          `Stok sehat ${prod.name} habis! Terdapat ${prod.expiredBlockedPacks} Pack pada batch kedaluwarsa yang diblokir otomatis oleh proteksi FEFO.`
+          `Stok sehat ${prod.name} habis! Terdapat ${prod.expiredBlockedPacks} Pack pada batch kedaluwarsa yang diblokir otomatis oleh proteksi FEFO.`,
         );
       } else {
         setErrorMsg(
           `Stok sehat ${prod.name} tidak mencukupi untuk menambah 1 ${
             unitType === "BOX" ? prod.wholesaleUnitName : prod.retailUnitName
-          }. Sisa stok sehat: ${prod.totalHealthyPacks} Pack.`
+          }. Sisa stok sehat: ${prod.totalHealthyPacks} Pack.`,
         );
       }
       return;
@@ -293,22 +305,20 @@ export default function SmartPosView({
 
     const lineKey = `${prod.id}-${unitType}`;
     const unitPrice =
-      unitType === "BOX"
-        ? prod.wholesalePricePerBox
-        : prod.retailPricePerPack;
+      unitType === "BOX" ? prod.wholesalePricePerBox : prod.retailPricePerPack;
     const promoPct = prod.firstFefoPickingBatch?.promoDiscountPct || 0;
     const pickingLabel = prod.firstFefoPickingBatch
       ? `${prod.firstFefoPickingBatch.batchNumber} (Exp ${prod.firstFefoPickingBatch.daysToExpiry} Hr)`
       : "Antrean FEFO";
     const shortBatch = getShortBatchCode(
-      prod.firstFefoPickingBatch?.batchNumber
+      prod.firstFefoPickingBatch?.batchNumber,
     );
 
     setCart((prev) => {
       const existing = prev.find((item) => item.key === lineKey);
       if (existing) {
         return prev.map((item) =>
-          item.key === lineKey ? { ...item, soldQty: item.soldQty + 1 } : item
+          item.key === lineKey ? { ...item, soldQty: item.soldQty + 1 } : item,
         );
       }
       return [
@@ -324,7 +334,8 @@ export default function SmartPosView({
           soldQty: 1,
           unitPrice,
           standardCogsPerPack:
-            prod.standardCogsPerPack ?? Math.round(prod.retailPricePerPack * 0.78),
+            prod.standardCogsPerPack ??
+            Math.round(prod.retailPricePerPack * 0.78),
           promoDiscountPct: promoPct,
           pickingBatchLabel: pickingLabel,
           shortBatchCode: shortBatch,
@@ -344,21 +355,20 @@ export default function SmartPosView({
           if (nextQty <= 0) return null;
           const prod = products.find((p) => p.id === item.productId);
           if (prod && delta > 0) {
-            const addPacks =
-              item.soldUnitType === "BOX" ? item.packsPerBox : 1;
+            const addPacks = item.soldUnitType === "BOX" ? item.packsPerBox : 1;
             if (
               getProductPacksInCart(prod.id) + addPacks >
               prod.totalHealthyPacks
             ) {
               setErrorMsg(
-                `Stok sehat ${prod.name} maksimum ${prod.totalHealthyPacks} Pack.`
+                `Stok sehat ${prod.name} maksimum ${prod.totalHealthyPacks} Pack.`,
               );
               return item;
             }
           }
           return { ...item, soldQty: nextQty };
         })
-        .filter((x): x is CartLine => x !== null)
+        .filter((x): x is CartLine => x !== null),
     );
   };
 
@@ -390,6 +400,86 @@ export default function SmartPosView({
 
   const apiPaymentMethod: "QRIS" | "CASH" =
     payUiOption === "CASH" ? "CASH" : "QRIS";
+
+  const handleQrisFileChange = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setQrisUploadError(null);
+    const allowedTypes = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
+    if (!allowedTypes.includes(file.type)) {
+      setQrisUploadError("Format gambar QRIS harus PNG, JPG, atau WEBP.");
+      e.target.value = "";
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setQrisUploadError("Ukuran gambar QRIS maksimal 2 MB.");
+      e.target.value = "";
+      return;
+    }
+
+    setQrisUploading(true);
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("Gagal membaca file gambar."));
+        reader.readAsDataURL(file);
+      });
+
+      const res = await fetch("/api/v1/stores/qris-image", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          storeId: activeStoreId,
+          imageDataUrl: dataUrl,
+        }),
+      });
+      const json = await res.json();
+      if (!json.success) {
+        setQrisUploadError(
+          json.error?.message || "Gagal menyimpan gambar QRIS.",
+        );
+      } else {
+        setQrisImageUrl(json.data.qrisImageUrl);
+      }
+    } catch (err) {
+      setQrisUploadError(
+        err instanceof Error ? err.message : "Gagal mengunggah gambar QRIS.",
+      );
+    } finally {
+      setQrisUploading(false);
+      e.target.value = "";
+    }
+  };
+
+  const handleRemoveQrisImage = async () => {
+    setQrisUploadError(null);
+    setQrisUploading(true);
+    try {
+      const res = await fetch(
+        `/api/v1/stores/qris-image?storeId=${encodeURIComponent(activeStoreId)}`,
+        { method: "DELETE" },
+      );
+      const json = await res.json();
+      if (!json.success) {
+        setQrisUploadError(
+          json.error?.message || "Gagal menghapus gambar QRIS.",
+        );
+      } else {
+        setQrisImageUrl(null);
+        setShowQrisModal(false);
+      }
+    } catch (err) {
+      setQrisUploadError(
+        err instanceof Error ? err.message : "Gagal menghapus gambar QRIS.",
+      );
+    } finally {
+      setQrisUploading(false);
+    }
+  };
 
   const handleCheckout = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -431,7 +521,7 @@ export default function SmartPosView({
       }
     } catch (err) {
       setErrorMsg(
-        err instanceof Error ? err.message : "Gagal memproses transaksi."
+        err instanceof Error ? err.message : "Gagal memproses transaksi.",
       );
     } finally {
       setSubmitting(false);
@@ -444,7 +534,8 @@ export default function SmartPosView({
       const q = searchQuery.trim().toLowerCase();
       const exactSku = products.find((p) => p.skuCode.toLowerCase() === q);
       const target =
-        exactSku || (filteredProducts.length === 1 ? filteredProducts[0] : null);
+        exactSku ||
+        (filteredProducts.length === 1 ? filteredProducts[0] : null);
       if (target) {
         handleAddToCart(target, "PACK");
         if (fastMode || exactSku) {
@@ -455,7 +546,7 @@ export default function SmartPosView({
   };
 
   const categories = Array.from(
-    new Set(products.map((p) => p.category).filter(Boolean))
+    new Set(products.map((p) => p.category).filter(Boolean)),
   );
 
   const filteredProducts = products.filter((p) => {
@@ -490,745 +581,71 @@ export default function SmartPosView({
   return (
     <div className="space-y-5">
       <div className={receiptModal ? "print:hidden space-y-5" : "space-y-5"}>
-      {/* Top Page Header (no white box wrapper) */}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-        <div>
-          <h1 className="text-[22px] sm:text-[24px] font-bold text-[#0F172A] tracking-tight leading-snug">
-            Kasir POS Cerdas Multi-Satuan (Eceran &amp; Dus)
-          </h1>
-          <p className="text-[13px] text-[#64748B] mt-0.5">
-            Konversi otomatis kardus ke bungkus &amp; pemotongan stok dari Batch
-            Kedaluwarsa Terdekat (FEFO)
-          </p>
-        </div>
+        {/* Top Page Header (no white box wrapper) */}
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+          <div>
+            <h1 className="text-[22px] sm:text-[24px] font-bold text-[#0F172A] tracking-tight leading-snug">
+              Kasir POS Cerdas Multi-Satuan (Eceran &amp; Dus)
+            </h1>
+            <p className="text-[13px] text-[#64748B] mt-0.5">
+              Konversi otomatis kardus ke bungkus &amp; pemotongan stok dari
+              Batch Kedaluwarsa Terdekat (FEFO)
+            </p>
+          </div>
 
-        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-          <span className="min-h-[40px] px-3.5 py-2 rounded-xl bg-white border border-[#E2E8F0] text-xs font-medium text-[#334155] inline-flex items-center gap-2 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
-            <span className="w-2 h-2 rounded-full bg-[#10B981] shrink-0" />
-            <span>Shift Pagi • Scanner Aktif</span>
-          </span>
-
-          <button
-            type="button"
-            onClick={() => {
-              setFastMode((prev) => !prev);
-              searchInputRef.current?.focus();
-            }}
-            aria-pressed={fastMode}
-            className={`min-h-[44px] sm:min-h-[40px] px-3.5 py-2 rounded-xl border text-xs font-medium inline-flex items-center gap-2 shadow-[0_1px_2px_rgba(15,23,42,0.03)] transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352] ${
-              fastMode
-                ? "bg-[#D7F0E6] border-[#0F6352]/40 text-[#0F6352] font-semibold"
-                : "bg-white hover:bg-[#F8FAFC] border-[#E2E8F0] text-[#334155]"
-            }`}
-          >
-            <svg
-              aria-hidden="true"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="w-4 h-4"
-            >
-              <rect x="2" y="5" width="20" height="14" rx="2" />
-              <path d="M6 10h.01" />
-              <path d="M10 10h.01" />
-              <path d="M14 10h.01" />
-              <path d="M18 10h.01" />
-              <path d="M8 14h8" />
-            </svg>
-            <span>
-              {fastMode ? "Mode Cepat Aktif (F2)" : "Mode Cepat (F2)"}
+          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+            <span className="min-h-[40px] px-3.5 py-2 rounded-xl bg-white border border-[#E2E8F0] text-xs font-medium text-[#334155] inline-flex items-center gap-2 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+              <span className="w-2 h-2 rounded-full bg-[#10B981] shrink-0" />
+              <span>Shift Pagi • Scanner Aktif</span>
             </span>
-          </button>
-        </div>
-      </div>
 
-      {errorMsg && (
-        <div
-          role="alert"
-          className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-xl text-xs font-semibold flex items-center justify-between gap-3"
-        >
-          <span>{errorMsg}</span>
-          <button
-            type="button"
-            aria-label="Tutup pesan galat"
-            onClick={() => setErrorMsg(null)}
-            className="min-h-[36px] min-w-[36px] rounded-lg hover:bg-red-100 text-red-700 font-bold flex items-center justify-center"
-          >
-            ✕
-          </button>
-        </div>
-      )}
-
-      {/* Main Workspace: Catalog (Left) + Active Order Cart (Right) */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_390px] xl:grid-cols-[1fr_410px] gap-5 items-start">
-        {/* Left Catalog Panel */}
-        <section
-          aria-label="Katalog produk POS multi-satuan"
-          className="bg-white rounded-2xl border border-[#E5E9EC] p-4 sm:p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] space-y-4"
-        >
-          {/* Search & Filter Toolbar */}
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
-            <div className="relative flex-1">
+            <button
+              type="button"
+              onClick={() => {
+                setFastMode((prev) => !prev);
+                searchInputRef.current?.focus();
+              }}
+              aria-pressed={fastMode}
+              className={`min-h-[44px] sm:min-h-[40px] px-3.5 py-2 rounded-xl border text-xs font-medium inline-flex items-center gap-2 shadow-[0_1px_2px_rgba(15,23,42,0.03)] transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352] ${
+                fastMode
+                  ? "bg-[#D7F0E6] border-[#0F6352]/40 text-[#0F6352] font-semibold"
+                  : "bg-white hover:bg-[#F8FAFC] border-[#E2E8F0] text-[#334155]"
+              }`}
+            >
               <svg
                 aria-hidden="true"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
-                strokeWidth="2"
+                strokeWidth="1.8"
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                className="w-4 h-4 text-[#94A3B8] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                className="w-4 h-4"
               >
-                <circle cx="11" cy="11" r="7" />
-                <path d="m20 20-3.5-3.5" />
+                <rect x="2" y="5" width="20" height="14" rx="2" />
+                <path d="M6 10h.01" />
+                <path d="M10 10h.01" />
+                <path d="M14 10h.01" />
+                <path d="M18 10h.01" />
+                <path d="M8 14h8" />
               </svg>
-              <input
-                ref={searchInputRef}
-                type="search"
-                aria-label="Cari nama produk frozen food atau scan barcode"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={handleSearchKeyDown}
-                placeholder="Cari nama produk frozen food atau scan barcode..."
-                className="w-full pl-10 pr-12 sm:pr-11 py-2.5 min-h-[44px] sm:min-h-[42px] text-xs rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] text-[#0F172A] placeholder:text-[#94A3B8] focus:bg-white focus:outline-none focus:border-[#0F6352]"
-              />
-              <button
-                type="button"
-                onClick={() => searchInputRef.current?.focus()}
-                aria-label="Fokus input pemindai barcode"
-                title="Scan barcode atau tekan Enter pada kode SKU"
-                className="absolute right-0.5 sm:right-1.5 top-1/2 -translate-y-1/2 min-h-[44px] min-w-[44px] sm:min-h-[36px] sm:min-w-[36px] rounded-lg text-[#0F6352] hover:bg-[#D7F0E6]/60 flex items-center justify-center transition-colors"
-              >
-                <svg
-                  aria-hidden="true"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.9"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="w-4 h-4"
-                >
-                  <path d="M4 7V5a1 1 0 0 1 1-1h2" />
-                  <path d="M17 4h2a1 1 0 0 1 1 1v2" />
-                  <path d="M20 17v2a1 1 0 0 1-1 1h-2" />
-                  <path d="M7 20H5a1 1 0 0 1-1-1v-2" />
-                  <path d="M8 8v8" />
-                  <path d="M12 8v8" />
-                  <path d="M16 8v8" />
-                </svg>
-              </button>
-            </div>
-
-            <div className="relative" ref={filterMenuRef}>
-              <button
-                type="button"
-                onClick={() => setFilterMenuOpen((prev) => !prev)}
-                aria-expanded={filterMenuOpen}
-                aria-label="Filter status stok produk"
-                className={`w-full sm:w-auto min-h-[44px] sm:min-h-[42px] px-4 py-2 rounded-xl border text-xs font-medium inline-flex items-center justify-center gap-2 transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352] ${
-                  statusFilter !== "ALL"
-                    ? "bg-[#D7F0E6] border-[#0F6352]/40 text-[#0F6352] font-semibold"
-                    : "bg-white hover:bg-[#F8FAFC] border-[#E2E8F0] text-[#334155]"
-                }`}
-              >
-                <svg
-                  aria-hidden="true"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.9"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="w-4 h-4"
-                >
-                  <line x1="4" y1="6" x2="20" y2="6" />
-                  <line x1="7" y1="12" x2="17" y2="12" />
-                  <line x1="10" y1="18" x2="14" y2="18" />
-                </svg>
-                <span>Filter</span>
-              </button>
-
-              {filterMenuOpen && (
-                <div
-                  role="menu"
-                  aria-label="Filter kondisi stok"
-                  className="absolute right-0 mt-1.5 w-52 bg-white rounded-xl border border-[#E2E8F0] shadow-lg p-1.5 z-30 text-xs"
-                >
-                  {(
-                    [
-                      ["ALL", "Semua Status Stok"],
-                      ["CRITICAL", "Stok Kritis (<= ROP)"],
-                      ["FEFO", "Prioritas FEFO (<30 Hr)"],
-                      ["SAFE", "Stok Aman"],
-                    ] as const
-                  ).map(([key, label]) => (
-                    <button
-                      key={key}
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        setStatusFilter(key);
-                        setFilterMenuOpen(false);
-                      }}
-                      className={`w-full text-left px-3 py-2 rounded-lg transition-colors ${
-                        statusFilter === key
-                          ? "bg-[#D7F0E6] text-[#0F6352] font-semibold"
-                          : "text-[#334155] hover:bg-[#F8FAFC]"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Category Pills */}
-          <div
-            role="tablist"
-            aria-label="Kategori produk"
-            className="flex items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-          >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={selectedCategory === "ALL"}
-              onClick={() => setSelectedCategory("ALL")}
-              className={`min-h-[44px] sm:min-h-[34px] px-4 py-1.5 rounded-full text-xs whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352] ${
-                selectedCategory === "ALL"
-                  ? "bg-[#0F6352] text-white font-semibold shadow-2xs"
-                  : "bg-transparent hover:bg-[#F8FAFC] text-[#64748B] hover:text-[#0F172A] font-medium"
-              }`}
-            >
-              Semua ({products.length})
-            </button>
-            {categories.map((cat) => {
-              const active = selectedCategory === cat;
-              return (
-                <button
-                  key={cat}
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => setSelectedCategory(cat)}
-                  className={`min-h-[44px] sm:min-h-[34px] px-3.5 py-1.5 rounded-full text-xs whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352] ${
-                    active
-                      ? "bg-[#0F6352] text-white font-semibold shadow-2xs"
-                      : "bg-transparent hover:bg-[#F8FAFC] text-[#64748B] hover:text-[#0F172A] font-medium"
-                  }`}
-                >
-                  {cat}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Product Grid */}
-          {loading ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 animate-pulse">
-              {[1, 2, 3, 4].map((n) => (
-                <div
-                  key={n}
-                  className="h-44 rounded-2xl bg-[#F8FAFC] border border-[#E5E9EC]"
-                />
-              ))}
-            </div>
-          ) : products.length === 0 ? (
-            <div className="py-12 px-4 text-center rounded-2xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC]/60 space-y-2.5">
-              <div className="text-xs font-semibold text-[#334155]">
-                Belum ada produk (Master SKU) di toko ini.
-              </div>
-              <div className="text-[11px] text-[#64748B]">
-                Tambahkan Master SKU terlebih dahulu di menu Inventaris FEFO
-                agar produk dapat dijual di kasir POS.
-              </div>
-            </div>
-          ) : filteredProducts.length === 0 ? (
-            <div className="py-12 px-4 text-center rounded-2xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC]/60 space-y-2.5">
-              <div className="text-xs font-semibold text-[#334155]">
-                Produk tidak ditemukan dengan kriteria pencarian saat ini.
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setSearchQuery("");
-                  setSelectedCategory("ALL");
-                  setStatusFilter("ALL");
-                }}
-                className="min-h-[40px] px-3.5 py-1.5 rounded-xl bg-white border border-[#E2E8F0] hover:bg-[#F1F5F9] text-xs font-semibold text-[#0F6352]"
-              >
-                Reset Pencarian &amp; Filter
-              </button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-              {filteredProducts.map((prod) => {
-                const packsInCart = getProductPacksInCart(prod.id);
-                const remainingPacks = prod.totalHealthyPacks - packsInCart;
-                const canAddPack = remainingPacks >= 1;
-                const canAddBox = remainingPacks >= prod.packsPerBox;
-                const isCritical = prod.isBelowRop || remainingPacks <= 0;
-                const daysExp = prod.firstFefoPickingBatch?.daysToExpiry ?? 999;
-                const isFefoWarning =
-                  !isCritical &&
-                  (daysExp < 30 ||
-                    prod.firstFefoPickingBatch?.fefoStatus === "PRIORITY_FEFO");
-                const shortBatch = getShortBatchCode(
-                  prod.firstFefoPickingBatch?.batchNumber
-                );
-
-                return (
-                  <article
-                    key={prod.id}
-                    className="bg-white rounded-2xl border border-[#E5E9EC] hover:border-[#CBD5E1] p-4 flex flex-col justify-between gap-3.5 transition-colors"
-                  >
-                    {/* Top SKU + Status Pill */}
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-mono text-[11px] text-[#64748B]">
-                          SKU: {prod.skuCode}
-                        </span>
-
-                        {isCritical ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-red-50 text-red-700 border border-red-200/80">
-                            <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
-                            Kritis • {remainingPacks} {prod.retailUnitName}
-                          </span>
-                        ) : isFefoWarning ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-800 border border-amber-200/80">
-                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                            FEFO • {daysExp} Hari
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[#EBF8F2] text-[#0F6352] border border-[#CCE8DB]">
-                            <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
-                            Aman • {remainingPacks} {prod.retailUnitName}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Product Thumbnail Tile + Name & Conversion */}
-                      <div className="flex items-center gap-3">
-                        <div
-                          aria-hidden="true"
-                          className="w-12 h-12 rounded-xl bg-[#F4F7F6] border border-[#E5E9EC] flex flex-col items-center justify-center shrink-0 text-[#0F6352]"
-                        >
-                          <span className="text-xs font-extrabold tracking-tight leading-none">
-                            {getProductCodeMonogram(prod.name)}
-                          </span>
-                          <span className="text-[9px] font-mono text-[#64748B] mt-1 leading-none">
-                            {prod.packsPerBox}P
-                          </span>
-                        </div>
-                        <div className="min-w-0">
-                          <h2 className="text-[13px] font-bold text-[#0F172A] leading-snug truncate">
-                            {prod.name}
-                          </h2>
-                          <div className="text-[11px] font-mono text-[#64748B] mt-0.5 truncate">
-                            1 {prod.wholesaleUnitName} = {prod.packsPerBox}{" "}
-                            {prod.retailUnitName}
-                            {prod.firstFefoPickingBatch
-                              ? ` • ${shortBatch}`
-                              : ""}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Dual Unit Quick Add Buttons */}
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        disabled={!canAddPack}
-                        onClick={() => handleAddToCart(prod, "PACK")}
-                        aria-label={`Tambah 1 ${prod.retailUnitName} ${prod.name}`}
-                        className="min-h-[44px] sm:min-h-[40px] px-2.5 py-2 rounded-xl border border-[#E2E8F0] bg-white hover:border-[#0F6352] hover:bg-[#F8FAFC] disabled:opacity-40 text-xs font-semibold text-[#0F172A] text-center transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352]"
-                      >
-                        + {prod.retailUnitName} •{" "}
-                        {formatShortPriceRb(prod.retailPricePerPack)}
-                      </button>
-
-                      <button
-                        type="button"
-                        disabled={!canAddBox}
-                        onClick={() => handleAddToCart(prod, "BOX")}
-                        aria-label={`Tambah 1 ${prod.wholesaleUnitName} ${prod.name}`}
-                        className="min-h-[44px] sm:min-h-[40px] px-2.5 py-2 rounded-xl border border-[#BFE6D6] bg-[#EBF8F2] hover:bg-[#D7F0E6] disabled:opacity-40 text-xs font-semibold text-[#0F6352] text-center transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352]"
-                      >
-                        + {prod.wholesaleUnitName} •{" "}
-                        {formatShortPriceRb(prod.wholesalePricePerBox)}
-                      </button>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          )}
-        </section>
-
-        {/* Right Active Invoice / Cart Panel */}
-        <aside aria-label="Nota aktif dan checkout kasir">
-          <form
-            onSubmit={handleCheckout}
-            className="bg-white rounded-2xl border border-[#E5E9EC] p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] space-y-4 lg:sticky lg:top-20"
-          >
-            {/* Active Invoice Header */}
-            <div className="flex items-center justify-between gap-2 pb-3 border-b border-[#F1F5F9]">
-              <div className="flex items-center gap-2 min-w-0">
-                <svg
-                  aria-hidden="true"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.9"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="w-4 h-4 text-[#0F6352] shrink-0"
-                >
-                  <path d="M4 3h16v18l-2.5-1.5L15 21l-3-1.5L9 21l-2.5-1.5L4 21V3Z" />
-                  <path d="M8 8h8" />
-                  <path d="M8 12h8" />
-                  <path d="M8 16h5" />
-                </svg>
-                <h2 className="text-[14px] font-bold text-[#0F172A] truncate">
-                  Nota Aktif (Transaksi Baru)
-                </h2>
-              </div>
-              <span className="px-2.5 py-1 rounded-full bg-[#F1F5F9] text-[#475569] text-[11px] font-medium shrink-0">
-                Grosir &amp; Ecer
+              <span>
+                {fastMode ? "Mode Cepat Aktif (F2)" : "Mode Cepat (F2)"}
               </span>
-            </div>
+            </button>
+          </div>
+        </div>
 
-            {/* Customer / Reseller Card with Ganti Selector */}
-            <div className="relative" ref={resellerMenuRef}>
-              <div className="bg-[#F8FAFC] border border-[#E5E9EC] rounded-xl px-3 py-2.5 flex items-center justify-between gap-2.5">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div
-                    aria-hidden="true"
-                    className="w-9 h-9 rounded-full bg-[#DCE9FF] text-[#1D4ED8] font-bold text-xs flex items-center justify-center shrink-0"
-                  >
-                    {getInitials(
-                      activeReseller?.businessName || "Pelanggan Umum"
-                    )}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-xs font-bold text-[#0F172A] truncate">
-                      {activeReseller?.businessName || "Pelanggan Umum"}
-                    </div>
-                    <div className="text-[11px] text-[#64748B] truncate">
-                      {activeReseller
-                        ? `Reseller Terdaftar (${activeReseller.culinarySegment})`
-                        : "Walk-in Eceran"}
-                    </div>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setResellerPickerOpen((prev) => !prev)}
-                  aria-expanded={resellerPickerOpen}
-                  aria-label="Ganti pelanggan atau mitra reseller"
-                  className="min-h-[44px] sm:min-h-[36px] px-2.5 py-1 rounded-lg text-xs font-semibold text-[#0F6352] hover:bg-[#D7F0E6]/60 inline-flex items-center gap-1 shrink-0 transition-colors"
-                >
-                  <span>Ganti</span>
-                  <svg
-                    aria-hidden="true"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="w-3.5 h-3.5"
-                  >
-                    <path d="m6 9 6 6 6-6" />
-                  </svg>
-                </button>
-              </div>
-
-              {resellerPickerOpen && (
-                <div
-                  role="listbox"
-                  aria-label="Pilih pelanggan atau reseller"
-                  className="absolute left-0 right-0 mt-1.5 max-h-60 overflow-y-auto bg-white rounded-xl border border-[#E2E8F0] shadow-lg p-1.5 z-30 text-xs space-y-0.5"
-                >
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={selectedResellerId === ""}
-                    onClick={() => {
-                      setSelectedResellerId("");
-                      setResellerPickerOpen(false);
-                    }}
-                    className={`w-full text-left px-3 py-2 rounded-lg flex items-center justify-between ${
-                      selectedResellerId === ""
-                        ? "bg-[#D7F0E6] text-[#0F6352] font-semibold"
-                        : "text-[#334155] hover:bg-[#F8FAFC]"
-                    }`}
-                  >
-                    <span>Pelanggan Umum (Walk-in Eceran)</span>
-                  </button>
-                  {resellers.map((r) => (
-                    <button
-                      key={r.id}
-                      type="button"
-                      role="option"
-                      aria-selected={selectedResellerId === r.id}
-                      onClick={() => {
-                        setSelectedResellerId(r.id);
-                        setResellerPickerOpen(false);
-                      }}
-                      className={`w-full text-left px-3 py-2 rounded-lg flex items-center justify-between gap-2 ${
-                        selectedResellerId === r.id
-                          ? "bg-[#D7F0E6] text-[#0F6352] font-semibold"
-                          : "text-[#334155] hover:bg-[#F8FAFC]"
-                      }`}
-                    >
-                      <span className="truncate">{r.businessName}</span>
-                      <span className="text-[10px] font-mono text-[#64748B] shrink-0">
-                        {r.culinarySegment}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Cart Items */}
-            <div className="space-y-3 max-h-64 overflow-y-auto pr-0.5">
-              {cart.length === 0 ? (
-                <div className="py-8 px-4 text-center text-xs text-[#64748B] border border-dashed border-[#CBD5E1] rounded-xl bg-[#F8FAFC]/50">
-                  Keranjang masih kosong. Klik tombol{" "}
-                  <strong className="text-[#0F172A]">+ Pack</strong> atau{" "}
-                  <strong className="text-[#0F6352]">+ Dus</strong> pada katalog
-                  produk.
-                </div>
-              ) : (
-                cart.map((item) => {
-                  const gross = item.unitPrice * item.soldQty;
-                  const disc =
-                    item.promoDiscountPct > 0
-                      ? Math.round(gross * (item.promoDiscountPct / 100))
-                      : 0;
-                  const netLine = gross - disc;
-                  const effectiveUnitPrice = Math.round(netLine / item.soldQty);
-
-                  return (
-                    <div
-                      key={item.key}
-                      className="pb-3 border-b border-[#F1F5F9] last:border-b-0 last:pb-0 space-y-2"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="text-xs font-bold text-[#0F172A] leading-snug">
-                          {item.productName}
-                        </div>
-                        <div className="font-mono text-xs font-bold text-[#0F172A] tabular-nums shrink-0">
-                          {formatRp(netLine)}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="inline-flex items-center rounded-lg border border-[#E2E8F0] bg-[#F8FAFC]">
-                          <button
-                            type="button"
-                            onClick={() => handleUpdateQty(item.key, -1)}
-                            aria-label={`Kurangi ${item.productName}`}
-                            className="w-11 h-11 sm:w-8 sm:h-8 flex items-center justify-center text-xs font-bold text-[#475569] hover:text-[#0F172A]"
-                          >
-                            -
-                          </button>
-                          <span className="px-2 text-xs font-semibold text-[#0F172A] whitespace-nowrap">
-                            {item.soldQty} {item.unitLabel}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => handleUpdateQty(item.key, 1)}
-                            aria-label={`Tambah ${item.productName}`}
-                            className="w-11 h-11 sm:w-8 sm:h-8 flex items-center justify-center text-xs font-bold text-[#475569] hover:text-[#0F172A]"
-                          >
-                            +
-                          </button>
-                        </div>
-
-                        <div className="text-[11px] font-mono text-right truncate">
-                          {item.isBelowRop ? (
-                            <span className="text-[#0F6352] font-medium">
-                              FEFO {item.shortBatchCode} • Auto-RFQ Siap
-                            </span>
-                          ) : (
-                            <span className="text-[#64748B]">
-                              FEFO {item.shortBatchCode} •{" "}
-                              {formatRp(effectiveUnitPrice)}/
-                              {item.unitLabel.toLowerCase()}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-            {/* Payment Methods */}
-            <div className="pt-3 border-t border-[#F1F5F9] space-y-3">
-              <div className="text-[11px] font-semibold tracking-wider text-[#64748B] uppercase">
-                Metode Pembayaran
-              </div>
-
-              <div className="grid grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPayUiOption("QRIS")}
-                  className={`min-h-[44px] sm:min-h-[40px] px-2 py-2 rounded-xl border text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352] ${
-                    payUiOption === "QRIS"
-                      ? "bg-[#EBF8F2] border-[#0F6352] text-[#0F6352]"
-                      : "bg-white hover:bg-[#F8FAFC] border-[#E2E8F0] text-[#475569]"
-                  }`}
-                >
-                  <svg
-                    aria-hidden="true"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.9"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="w-3.5 h-3.5 shrink-0"
-                  >
-                    <rect x="3" y="3" width="7" height="7" rx="1" />
-                    <rect x="14" y="3" width="7" height="7" rx="1" />
-                    <rect x="3" y="14" width="7" height="7" rx="1" />
-                    <path d="M14 14h3v3h-3z" />
-                    <path d="M18 18h3v3h-3z" />
-                  </svg>
-                  <span>QRIS</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setPayUiOption("CASH")}
-                  className={`min-h-[44px] sm:min-h-[40px] px-2 py-2 rounded-xl border text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352] ${
-                    payUiOption === "CASH"
-                      ? "bg-[#EBF8F2] border-[#0F6352] text-[#0F6352]"
-                      : "bg-white hover:bg-[#F8FAFC] border-[#E2E8F0] text-[#475569]"
-                  }`}
-                >
-                  <svg
-                    aria-hidden="true"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.9"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="w-3.5 h-3.5 shrink-0"
-                  >
-                    <rect x="2" y="6" width="20" height="12" rx="2" />
-                    <circle cx="12" cy="12" r="2.5" />
-                  </svg>
-                  <span>Tunai</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setPayUiOption("TRANSFER")}
-                  className={`min-h-[44px] sm:min-h-[40px] px-2 py-2 rounded-xl border text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352] ${
-                    payUiOption === "TRANSFER"
-                      ? "bg-[#EBF8F2] border-[#0F6352] text-[#0F6352]"
-                      : "bg-white hover:bg-[#F8FAFC] border-[#E2E8F0] text-[#475569]"
-                  }`}
-                >
-                  <svg
-                    aria-hidden="true"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.9"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="w-3.5 h-3.5 shrink-0"
-                  >
-                    <path d="M3 21h18" />
-                    <path d="M5 6l7-3 7 3" />
-                    <path d="M6 10v8" />
-                    <path d="M12 10v8" />
-                    <path d="M18 10v8" />
-                  </svg>
-                  <span>Transfer</span>
-                </button>
-              </div>
-
-              {payUiOption === "CASH" && (
-                <div>
-                  <label
-                    htmlFor="pos-cash-received"
-                    className="block text-[11px] font-semibold text-[#475569] mb-1"
-                  >
-                    Nominal Uang Tunai Diterima (Rp)
-                  </label>
-                  <input
-                    id="pos-cash-received"
-                    type="number"
-                    placeholder={String(cartSubtotal)}
-                    value={cashReceivedInput}
-                    onChange={(e) => setCashReceivedInput(e.target.value)}
-                    className="w-full px-3 py-2 min-h-[40px] rounded-xl border border-[#CBD5E1] text-xs font-bold text-[#0F172A] focus:outline-none focus:border-[#0F6352]"
-                  />
-                </div>
-              )}
-
-              {payUiOption === "TRANSFER" && (
-                <div className="text-[11px] text-[#475569] bg-[#F8FAFC] border border-[#E5E9EC] rounded-lg px-3 py-1.5">
-                  Pembayaran transfer bank dicatat sebagai pelunasan nontunai
-                  (QRIS/Transfer).
-                </div>
-              )}
-
-              {/* Estimasi Margin Bersih */}
-              <div className="bg-[#F8FAFC] border border-[#E5E9EC] rounded-xl px-3.5 py-2.5 flex items-center justify-between text-xs">
-                <span className="text-[#64748B] font-medium">
-                  Estimasi Margin Bersih
-                </span>
-                <span
-                  className={`font-mono font-bold tabular-nums ${
-                    estimatedMarginRp < 0 ? "text-amber-700" : "text-[#0F6352]"
-                  }`}
-                >
-                  {activeRole === "CASHIER"
-                    ? "Tersembunyi (Kasir)"
-                    : estimatedMarginRp < 0
-                      ? `-Rp ${Math.abs(estimatedMarginRp).toLocaleString("id-ID")}`
-                      : `+${formatRp(estimatedMarginRp)}`}
-                </span>
-              </div>
-
-              {/* Total Pembayaran */}
-              <div className="flex items-end justify-between gap-2 pt-1">
-                <div>
-                  <div className="text-[11px] text-[#64748B] font-medium">
-                    Total Pembayaran
-                  </div>
-                  <div className="text-[26px] font-bold text-[#0F172A] tracking-tight tabular-nums leading-none mt-1">
-                    {formatRp(cartSubtotal)}
-                  </div>
-                </div>
-                <span className="px-2.5 py-1 rounded-full bg-[#F1F5F9] text-[#475569] text-[11px] font-medium shrink-0">
-                  {cart.length} Jenis Item ({totalCartUnits} Unit)
-                </span>
-              </div>
-
-              {/* Primary CTA */}
-              <button
-                type="submit"
-                disabled={cart.length === 0 || submitting}
-                className="w-full min-h-[46px] px-4 py-3 rounded-xl bg-[#0F6352] hover:bg-[#0B4F41] disabled:bg-[#CBD5E1] disabled:text-slate-500 text-white text-xs font-semibold inline-flex items-center justify-center gap-2 shadow-xs transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0F6352]"
-              >
+        {/* Main Workspace: Catalog (Left) + Active Order Cart (Right) */}
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_350px] xl:grid-cols-[minmax(0,1fr)_390px] gap-5 items-start">
+          {/* Left Catalog Panel */}
+          <section
+            aria-label="Katalog produk POS multi-satuan"
+            className="min-w-0 w-full bg-white rounded-2xl border border-[#E5E9EC] p-4 sm:p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] space-y-4"
+          >
+            {/* Search & Filter Toolbar */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+              <div className="relative flex-1 min-w-0">
                 <svg
                   aria-hidden="true"
                   viewBox="0 0 24 24"
@@ -1237,38 +654,798 @@ export default function SmartPosView({
                   strokeWidth="2"
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  className="w-4 h-4 shrink-0"
+                  className="w-4 h-4 text-[#94A3B8] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
                 >
-                  <path d="M4 3h16v18l-2.5-1.5L15 21l-3-1.5L9 21l-2.5-1.5L4 21V3Z" />
-                  <path d="M8 9h8" />
-                  <path d="M8 13h5" />
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="m20 20-3.5-3.5" />
                 </svg>
-                <span>
-                  {submitting
-                    ? "Memproses Transaksi Atomik..."
-                    : "Bayar & Kirim Struk WA →"}
-                </span>
-              </button>
+                <input
+                  ref={searchInputRef}
+                  type="search"
+                  aria-label="Cari nama produk frozen food atau scan barcode"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={handleSearchKeyDown}
+                  placeholder="Cari nama produk frozen food atau scan barcode..."
+                  className="w-full pl-10 pr-12 sm:pr-11 py-2.5 min-h-[44px] sm:min-h-[42px] text-xs rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] text-[#0F172A] placeholder:text-[#94A3B8] focus:bg-white focus:outline-none focus:border-[#0F6352]"
+                />
+                <button
+                  type="button"
+                  onClick={() => searchInputRef.current?.focus()}
+                  aria-label="Fokus input pemindai barcode"
+                  title="Scan barcode atau tekan Enter pada kode SKU"
+                  className="absolute right-0.5 sm:right-1.5 top-1/2 -translate-y-1/2 min-h-[44px] min-w-[44px] sm:min-h-[36px] sm:min-w-[36px] rounded-lg text-[#0F6352] hover:bg-[#D7F0E6]/60 flex items-center justify-center transition-colors"
+                >
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.9"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="w-4 h-4"
+                  >
+                    <path d="M4 7V5a1 1 0 0 1 1-1h2" />
+                    <path d="M17 4h2a1 1 0 0 1 1 1v2" />
+                    <path d="M20 17v2a1 1 0 0 1-1 1h-2" />
+                    <path d="M7 20H5a1 1 0 0 1-1-1v-2" />
+                    <path d="M8 8v8" />
+                    <path d="M12 8v8" />
+                    <path d="M16 8v8" />
+                  </svg>
+                </button>
+              </div>
 
-              <div className="text-[11px] text-[#64748B] flex items-center justify-center gap-1.5">
-                <svg
-                  aria-hidden="true"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.9"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="w-3.5 h-3.5 text-[#0F6352] shrink-0"
+              <div className="relative" ref={filterMenuRef}>
+                <button
+                  type="button"
+                  onClick={() => setFilterMenuOpen((prev) => !prev)}
+                  aria-expanded={filterMenuOpen}
+                  aria-label="Filter status stok produk"
+                  className={`w-full sm:w-auto min-h-[44px] sm:min-h-[42px] px-4 py-2 rounded-xl border text-xs font-medium inline-flex items-center justify-center gap-2 transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352] ${
+                    statusFilter !== "ALL"
+                      ? "bg-[#D7F0E6] border-[#0F6352]/40 text-[#0F6352] font-semibold"
+                      : "bg-white hover:bg-[#F8FAFC] border-[#E2E8F0] text-[#334155]"
+                  }`}
                 >
-                  <path d="m7 7 10 10-5 5V2l5 5L7 17" />
-                </svg>
-                <span>Auto-cetak struk Bluetooth &amp; potong stok realtime</span>
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.9"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="w-4 h-4"
+                  >
+                    <line x1="4" y1="6" x2="20" y2="6" />
+                    <line x1="7" y1="12" x2="17" y2="12" />
+                    <line x1="10" y1="18" x2="14" y2="18" />
+                  </svg>
+                  <span>Filter</span>
+                </button>
+
+                {filterMenuOpen && (
+                  <div
+                    role="menu"
+                    aria-label="Filter kondisi stok"
+                    className="absolute right-0 mt-1.5 w-52 bg-white rounded-xl border border-[#E2E8F0] shadow-lg p-1.5 z-30 text-xs"
+                  >
+                    {(
+                      [
+                        ["ALL", "Semua Status Stok"],
+                        ["CRITICAL", "Stok Kritis (<= ROP)"],
+                        ["FEFO", "Prioritas FEFO (<30 Hr)"],
+                        ["SAFE", "Stok Aman"],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setStatusFilter(key);
+                          setFilterMenuOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 rounded-lg transition-colors ${
+                          statusFilter === key
+                            ? "bg-[#D7F0E6] text-[#0F6352] font-semibold"
+                            : "text-[#334155] hover:bg-[#F8FAFC]"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
-          </form>
-        </aside>
-      </div>
+
+            {/* Category Pills */}
+            <div
+              role="tablist"
+              aria-label="Kategori produk"
+              className="flex items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={selectedCategory === "ALL"}
+                onClick={() => setSelectedCategory("ALL")}
+                className={`min-h-[44px] sm:min-h-[34px] px-4 py-1.5 rounded-full text-xs whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352] ${
+                  selectedCategory === "ALL"
+                    ? "bg-[#0F6352] text-white font-semibold shadow-2xs"
+                    : "bg-transparent hover:bg-[#F8FAFC] text-[#64748B] hover:text-[#0F172A] font-medium"
+                }`}
+              >
+                Semua ({products.length})
+              </button>
+              {categories.map((cat) => {
+                const active = selectedCategory === cat;
+                return (
+                  <button
+                    key={cat}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setSelectedCategory(cat)}
+                    className={`min-h-[44px] sm:min-h-[34px] px-3.5 py-1.5 rounded-full text-xs whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352] ${
+                      active
+                        ? "bg-[#0F6352] text-white font-semibold shadow-2xs"
+                        : "bg-transparent hover:bg-[#F8FAFC] text-[#64748B] hover:text-[#0F172A] font-medium"
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Product Grid */}
+            {loading ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-3.5 animate-pulse">
+                {[1, 2, 3, 4].map((n) => (
+                  <div
+                    key={n}
+                    className="h-44 rounded-2xl bg-[#F8FAFC] border border-[#E5E9EC]"
+                  />
+                ))}
+              </div>
+            ) : products.length === 0 ? (
+              <div className="py-12 px-4 text-center rounded-2xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC]/60 space-y-2.5">
+                <div className="text-xs font-semibold text-[#334155]">
+                  Belum ada produk (Master SKU) di toko ini.
+                </div>
+                <div className="text-[11px] text-[#64748B]">
+                  Tambahkan Master SKU terlebih dahulu di menu Inventaris FEFO
+                  agar produk dapat dijual di kasir POS.
+                </div>
+              </div>
+            ) : filteredProducts.length === 0 ? (
+              <div className="py-12 px-4 text-center rounded-2xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC]/60 space-y-2.5">
+                <div className="text-xs font-semibold text-[#334155]">
+                  Produk tidak ditemukan dengan kriteria pencarian saat ini.
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery("");
+                    setSelectedCategory("ALL");
+                    setStatusFilter("ALL");
+                  }}
+                  className="min-h-[40px] px-3.5 py-1.5 rounded-xl bg-white border border-[#E2E8F0] hover:bg-[#F1F5F9] text-xs font-semibold text-[#0F6352]"
+                >
+                  Reset Pencarian &amp; Filter
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-3.5">
+                {filteredProducts.map((prod) => {
+                  const packsInCart = getProductPacksInCart(prod.id);
+                  const remainingPacks = prod.totalHealthyPacks - packsInCart;
+                  const canAddPack = remainingPacks >= 1;
+                  const canAddBox = remainingPacks >= prod.packsPerBox;
+                  const isCritical = prod.isBelowRop || remainingPacks <= 0;
+                  const daysExp =
+                    prod.firstFefoPickingBatch?.daysToExpiry ?? 999;
+                  const isFefoWarning =
+                    !isCritical &&
+                    (daysExp < 30 ||
+                      prod.firstFefoPickingBatch?.fefoStatus ===
+                        "PRIORITY_FEFO");
+                  const shortBatch = getShortBatchCode(
+                    prod.firstFefoPickingBatch?.batchNumber,
+                  );
+
+                  return (
+                    <article
+                      key={prod.id}
+                      className="min-w-0 bg-white rounded-2xl border border-[#E5E9EC] hover:border-[#CBD5E1] p-4 flex flex-col justify-between gap-3.5 transition-colors"
+                    >
+                      {/* Top SKU + Status Pill */}
+                      <div className="space-y-3 min-w-0">
+                        <div className="flex items-center justify-between gap-2 min-w-0">
+                          <span className="font-mono text-[11px] text-[#64748B] truncate">
+                            SKU: {prod.skuCode}
+                          </span>
+
+                          {isCritical ? (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-red-50 text-red-700 border border-red-200/80 shrink-0">
+                              <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                              Kritis • {remainingPacks} {prod.retailUnitName}
+                            </span>
+                          ) : isFefoWarning ? (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-800 border border-amber-200/80 shrink-0">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                              FEFO • {daysExp} Hari
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[#EBF8F2] text-[#0F6352] border border-[#CCE8DB] shrink-0">
+                              <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
+                              Aman • {remainingPacks} {prod.retailUnitName}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Product Thumbnail Tile + Name & Conversion */}
+                        <div className="flex items-center gap-3">
+                          <div
+                            aria-hidden="true"
+                            className="w-12 h-12 rounded-xl bg-[#F4F7F6] border border-[#E5E9EC] flex flex-col items-center justify-center shrink-0 text-[#0F6352]"
+                          >
+                            <span className="text-xs font-extrabold tracking-tight leading-none">
+                              {getProductCodeMonogram(prod.name)}
+                            </span>
+                            <span className="text-[9px] font-mono text-[#64748B] mt-1 leading-none">
+                              {prod.packsPerBox}P
+                            </span>
+                          </div>
+                          <div className="min-w-0">
+                            <h2 className="text-[13px] font-bold text-[#0F172A] leading-snug truncate">
+                              {prod.name}
+                            </h2>
+                            <div className="text-[11px] font-mono text-[#64748B] mt-0.5 truncate">
+                              1 {prod.wholesaleUnitName} = {prod.packsPerBox}{" "}
+                              {prod.retailUnitName}
+                              {prod.firstFefoPickingBatch
+                                ? ` • ${shortBatch}`
+                                : ""}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Dual Unit Quick Add Buttons */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          disabled={!canAddPack}
+                          onClick={() => handleAddToCart(prod, "PACK")}
+                          aria-label={`Tambah 1 ${prod.retailUnitName} ${prod.name}`}
+                          className="min-h-[44px] sm:min-h-[40px] px-2 py-2 rounded-xl border border-[#E2E8F0] bg-white hover:border-[#0F6352] hover:bg-[#F8FAFC] disabled:opacity-40 text-[11px] sm:text-xs font-semibold text-[#0F172A] text-center truncate transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352]"
+                        >
+                          + {prod.retailUnitName} •{" "}
+                          {formatShortPriceRb(prod.retailPricePerPack)}
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={!canAddBox}
+                          onClick={() => handleAddToCart(prod, "BOX")}
+                          aria-label={`Tambah 1 ${prod.wholesaleUnitName} ${prod.name}`}
+                          className="min-h-[44px] sm:min-h-[40px] px-2 py-2 rounded-xl border border-[#BFE6D6] bg-[#EBF8F2] hover:bg-[#D7F0E6] disabled:opacity-40 text-[11px] sm:text-xs font-semibold text-[#0F6352] text-center truncate transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352]"
+                        >
+                          + {prod.wholesaleUnitName} •{" "}
+                          {formatShortPriceRb(prod.wholesalePricePerBox)}
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          {/* Right Active Invoice / Cart Panel */}
+          <aside
+            aria-label="Nota aktif dan checkout kasir"
+            className="min-w-0 w-full"
+          >
+            <form
+              onSubmit={handleCheckout}
+              className="w-full min-w-0 bg-white rounded-2xl border border-[#E5E9EC] p-4 sm:p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] space-y-4 lg:sticky lg:top-20"
+            >
+              {/* Active Invoice Header */}
+              <div className="flex items-center justify-between gap-2 pb-3 border-b border-[#F1F5F9]">
+                <div className="flex items-center gap-2 min-w-0">
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.9"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="w-4 h-4 text-[#0F6352] shrink-0"
+                  >
+                    <path d="M4 3h16v18l-2.5-1.5L15 21l-3-1.5L9 21l-2.5-1.5L4 21V3Z" />
+                    <path d="M8 8h8" />
+                    <path d="M8 12h8" />
+                    <path d="M8 16h5" />
+                  </svg>
+                  <h2 className="text-[14px] font-bold text-[#0F172A] truncate">
+                    Nota Aktif (Transaksi Baru)
+                  </h2>
+                </div>
+                <span className="px-2.5 py-1 rounded-full bg-[#F1F5F9] text-[#475569] text-[11px] font-medium shrink-0">
+                  Grosir &amp; Ecer
+                </span>
+              </div>
+
+              {/* Customer / Reseller Card with Ganti Selector */}
+              <div className="relative" ref={resellerMenuRef}>
+                <div className="bg-[#F8FAFC] border border-[#E5E9EC] rounded-xl px-3 py-2.5 flex items-center justify-between gap-2.5">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div
+                      aria-hidden="true"
+                      className="w-9 h-9 rounded-full bg-[#DCE9FF] text-[#1D4ED8] font-bold text-xs flex items-center justify-center shrink-0"
+                    >
+                      {getInitials(
+                        activeReseller?.businessName || "Pelanggan Umum",
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-[#0F172A] truncate">
+                        {activeReseller?.businessName || "Pelanggan Umum"}
+                      </div>
+                      <div className="text-[11px] text-[#64748B] truncate">
+                        {activeReseller
+                          ? `Reseller Terdaftar (${activeReseller.culinarySegment})`
+                          : "Walk-in Eceran"}
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setResellerPickerOpen((prev) => !prev)}
+                    aria-expanded={resellerPickerOpen}
+                    aria-label="Ganti pelanggan atau mitra reseller"
+                    className="min-h-[44px] sm:min-h-[36px] px-2.5 py-1 rounded-lg text-xs font-semibold text-[#0F6352] hover:bg-[#D7F0E6]/60 inline-flex items-center gap-1 shrink-0 transition-colors"
+                  >
+                    <span>Ganti</span>
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="w-3.5 h-3.5"
+                    >
+                      <path d="m6 9 6 6 6-6" />
+                    </svg>
+                  </button>
+                </div>
+
+                {resellerPickerOpen && (
+                  <div
+                    role="listbox"
+                    aria-label="Pilih pelanggan atau reseller"
+                    className="absolute left-0 right-0 mt-1.5 max-h-60 overflow-y-auto bg-white rounded-xl border border-[#E2E8F0] shadow-lg p-1.5 z-30 text-xs space-y-0.5"
+                  >
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={selectedResellerId === ""}
+                      onClick={() => {
+                        setSelectedResellerId("");
+                        setResellerPickerOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 rounded-lg flex items-center justify-between ${
+                        selectedResellerId === ""
+                          ? "bg-[#D7F0E6] text-[#0F6352] font-semibold"
+                          : "text-[#334155] hover:bg-[#F8FAFC]"
+                      }`}
+                    >
+                      <span>Pelanggan Umum (Walk-in Eceran)</span>
+                    </button>
+                    {resellers.map((r) => (
+                      <button
+                        key={r.id}
+                        type="button"
+                        role="option"
+                        aria-selected={selectedResellerId === r.id}
+                        onClick={() => {
+                          setSelectedResellerId(r.id);
+                          setResellerPickerOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 rounded-lg flex items-center justify-between gap-2 ${
+                          selectedResellerId === r.id
+                            ? "bg-[#D7F0E6] text-[#0F6352] font-semibold"
+                            : "text-[#334155] hover:bg-[#F8FAFC]"
+                        }`}
+                      >
+                        <span className="truncate">{r.businessName}</span>
+                        <span className="text-[10px] font-mono text-[#64748B] shrink-0">
+                          {r.culinarySegment}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Cart Items */}
+              <div className="space-y-3 max-h-64 overflow-y-auto pr-0.5">
+                {cart.length === 0 ? (
+                  <div className="py-8 px-4 text-center text-xs text-[#64748B] border border-dashed border-[#CBD5E1] rounded-xl bg-[#F8FAFC]/50">
+                    Keranjang masih kosong. Klik tombol{" "}
+                    <strong className="text-[#0F172A]">+ Pack</strong> atau{" "}
+                    <strong className="text-[#0F6352]">+ Dus</strong> pada
+                    katalog produk.
+                  </div>
+                ) : (
+                  cart.map((item) => {
+                    const gross = item.unitPrice * item.soldQty;
+                    const disc =
+                      item.promoDiscountPct > 0
+                        ? Math.round(gross * (item.promoDiscountPct / 100))
+                        : 0;
+                    const netLine = gross - disc;
+                    const effectiveUnitPrice = Math.round(
+                      netLine / item.soldQty,
+                    );
+
+                    return (
+                      <div
+                        key={item.key}
+                        className="pb-3 border-b border-[#F1F5F9] last:border-b-0 last:pb-0 space-y-2"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="text-xs font-bold text-[#0F172A] leading-snug">
+                            {item.productName}
+                          </div>
+                          <div className="font-mono text-xs font-bold text-[#0F172A] tabular-nums shrink-0">
+                            {formatRp(netLine)}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="inline-flex items-center rounded-lg border border-[#E2E8F0] bg-[#F8FAFC]">
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateQty(item.key, -1)}
+                              aria-label={`Kurangi ${item.productName}`}
+                              className="w-11 h-11 sm:w-8 sm:h-8 flex items-center justify-center text-xs font-bold text-[#475569] hover:text-[#0F172A]"
+                            >
+                              -
+                            </button>
+                            <span className="px-2 text-xs font-semibold text-[#0F172A] whitespace-nowrap">
+                              {item.soldQty} {item.unitLabel}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateQty(item.key, 1)}
+                              aria-label={`Tambah ${item.productName}`}
+                              className="w-11 h-11 sm:w-8 sm:h-8 flex items-center justify-center text-xs font-bold text-[#475569] hover:text-[#0F172A]"
+                            >
+                              +
+                            </button>
+                          </div>
+
+                          <div className="text-[11px] font-mono text-right truncate">
+                            {item.isBelowRop ? (
+                              <span className="text-[#0F6352] font-medium">
+                                FEFO {item.shortBatchCode} • Auto-RFQ Siap
+                              </span>
+                            ) : (
+                              <span className="text-[#64748B]">
+                                FEFO {item.shortBatchCode} •{" "}
+                                {formatRp(effectiveUnitPrice)}/
+                                {item.unitLabel.toLowerCase()}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Payment Methods */}
+              <div className="pt-3 border-t border-[#F1F5F9] space-y-3">
+                <div className="text-[11px] font-semibold tracking-wider text-[#64748B] uppercase">
+                  Metode Pembayaran
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPayUiOption("QRIS")}
+                    className={`min-w-0 min-h-[44px] sm:min-h-[40px] px-1.5 py-2 rounded-xl border text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352] ${
+                      payUiOption === "QRIS"
+                        ? "bg-[#EBF8F2] border-[#0F6352] text-[#0F6352]"
+                        : "bg-white hover:bg-[#F8FAFC] border-[#E2E8F0] text-[#475569]"
+                    }`}
+                  >
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.9"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="w-3.5 h-3.5 shrink-0"
+                    >
+                      <rect x="3" y="3" width="7" height="7" rx="1" />
+                      <rect x="14" y="3" width="7" height="7" rx="1" />
+                      <rect x="3" y="14" width="7" height="7" rx="1" />
+                      <path d="M14 14h3v3h-3z" />
+                      <path d="M18 18h3v3h-3z" />
+                    </svg>
+                    <span>QRIS</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPayUiOption("CASH")}
+                    className={`min-w-0 min-h-[44px] sm:min-h-[40px] px-1.5 py-2 rounded-xl border text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352] ${
+                      payUiOption === "CASH"
+                        ? "bg-[#EBF8F2] border-[#0F6352] text-[#0F6352]"
+                        : "bg-white hover:bg-[#F8FAFC] border-[#E2E8F0] text-[#475569]"
+                    }`}
+                  >
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.9"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="w-3.5 h-3.5 shrink-0"
+                    >
+                      <rect x="2" y="6" width="20" height="12" rx="2" />
+                      <circle cx="12" cy="12" r="2.5" />
+                    </svg>
+                    <span>Tunai</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPayUiOption("TRANSFER")}
+                    className={`min-w-0 min-h-[44px] sm:min-h-[40px] px-1.5 py-2 rounded-xl border text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352] ${
+                      payUiOption === "TRANSFER"
+                        ? "bg-[#EBF8F2] border-[#0F6352] text-[#0F6352]"
+                        : "bg-white hover:bg-[#F8FAFC] border-[#E2E8F0] text-[#475569]"
+                    }`}
+                  >
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.9"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="w-3.5 h-3.5 shrink-0"
+                    >
+                      <path d="M3 21h18" />
+                      <path d="M5 6l7-3 7 3" />
+                      <path d="M6 10v8" />
+                      <path d="M12 10v8" />
+                      <path d="M18 10v8" />
+                    </svg>
+                    <span>Transfer</span>
+                  </button>
+                </div>
+
+                {payUiOption === "QRIS" && (
+                  <div className="bg-[#F8FAFC] border border-[#E5E9EC] rounded-xl p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <label
+                        htmlFor="pos-qris-file"
+                        className="text-[11px] font-semibold text-[#475569]"
+                      >
+                        Gambar QRIS Toko (Opsional)
+                      </label>
+                      {qrisImageUrl && (
+                        <span className="text-[10px] font-medium text-[#0F6352]">
+                          Tersimpan
+                        </span>
+                      )}
+                    </div>
+
+                    <input
+                      id="pos-qris-file"
+                      ref={qrisFileInputRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      onChange={handleQrisFileChange}
+                      className="sr-only"
+                    />
+
+                    {qrisImageUrl ? (
+                      <div className="flex items-center gap-3">
+                        <Image
+                          src={qrisImageUrl}
+                          alt="Kode QRIS toko untuk pembayaran kasir"
+                          width={56}
+                          height={56}
+                          unoptimized
+                          className="w-14 h-14 rounded-lg border border-[#E2E8F0] bg-white object-contain shrink-0"
+                        />
+                        <div className="min-w-0 flex-1 flex flex-wrap items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setShowQrisModal(true)}
+                            className="min-h-[36px] px-2.5 py-1 rounded-lg bg-[#0F6352] hover:bg-[#0B4F41] text-white text-[11px] font-semibold transition-colors"
+                          >
+                            Perbesar QR
+                          </button>
+                          <button
+                            type="button"
+                            disabled={qrisUploading}
+                            onClick={() => qrisFileInputRef.current?.click()}
+                            className="min-h-[36px] px-2.5 py-1 rounded-lg bg-white hover:bg-[#F1F5F9] border border-[#CBD5E1] text-[#334155] text-[11px] font-medium transition-colors"
+                          >
+                            {qrisUploading ? "Menyimpan..." : "Ganti"}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={qrisUploading}
+                            onClick={handleRemoveQrisImage}
+                            className="min-h-[36px] px-2.5 py-1 rounded-lg bg-white hover:bg-red-50 border border-[#E2E8F0] text-red-600 text-[11px] font-medium transition-colors"
+                          >
+                            Hapus
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={qrisUploading}
+                        onClick={() => qrisFileInputRef.current?.click()}
+                        className="w-full min-h-[44px] sm:min-h-[40px] px-3 py-2 rounded-lg border border-dashed border-[#CBD5E1] bg-white hover:border-[#0F6352] hover:bg-[#EBF8F2]/40 text-xs font-medium text-[#475569] hover:text-[#0F6352] inline-flex items-center justify-center gap-2 transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352]"
+                      >
+                        <svg
+                          aria-hidden="true"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.9"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          className="w-4 h-4 shrink-0"
+                        >
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                          <polyline points="17 8 12 3 7 8" />
+                          <line x1="12" y1="3" x2="12" y2="15" />
+                        </svg>
+                        <span>
+                          {qrisUploading
+                            ? "Mengunggah gambar QRIS..."
+                            : "Unggah Gambar QRIS (PNG/JPG)"}
+                        </span>
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {payUiOption === "CASH" && (
+                  <div>
+                    <label
+                      htmlFor="pos-cash-received"
+                      className="block text-[11px] font-semibold text-[#475569] mb-1"
+                    >
+                      Nominal Uang Tunai Diterima (Rp)
+                    </label>
+                    <input
+                      id="pos-cash-received"
+                      type="number"
+                      placeholder={String(cartSubtotal)}
+                      value={cashReceivedInput}
+                      onChange={(e) => setCashReceivedInput(e.target.value)}
+                      className="w-full px-3 py-2 min-h-[40px] rounded-xl border border-[#CBD5E1] text-xs font-bold text-[#0F172A] focus:outline-none focus:border-[#0F6352]"
+                    />
+                  </div>
+                )}
+
+                {payUiOption === "TRANSFER" && (
+                  <div className="text-[11px] text-[#475569] bg-[#F8FAFC] border border-[#E5E9EC] rounded-lg px-3 py-1.5">
+                    Pembayaran transfer bank dicatat sebagai pelunasan nontunai
+                    (QRIS/Transfer).
+                  </div>
+                )}
+
+                {/* Estimasi Margin Bersih */}
+                <div className="bg-[#F8FAFC] border border-[#E5E9EC] rounded-xl px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <span className="text-[#64748B] font-medium">
+                    Estimasi Margin Bersih
+                  </span>
+                  <span
+                    className={`font-mono font-bold tabular-nums ${
+                      estimatedMarginRp < 0
+                        ? "text-amber-700"
+                        : "text-[#0F6352]"
+                    }`}
+                  >
+                    {activeRole === "CASHIER"
+                      ? "Tersembunyi (Kasir)"
+                      : estimatedMarginRp < 0
+                        ? `-Rp ${Math.abs(estimatedMarginRp).toLocaleString("id-ID")}`
+                        : `+${formatRp(estimatedMarginRp)}`}
+                  </span>
+                </div>
+
+                {/* Total Pembayaran */}
+                <div className="flex flex-wrap items-end justify-between gap-2 pt-1">
+                  <div className="min-w-0">
+                    <div className="text-[11px] text-[#64748B] font-medium">
+                      Total Pembayaran
+                    </div>
+                    <div className="text-[22px] sm:text-[26px] font-bold text-[#0F172A] tracking-tight tabular-nums leading-none mt-1">
+                      {formatRp(cartSubtotal)}
+                    </div>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-full bg-[#F1F5F9] text-[#475569] text-[11px] font-medium shrink-0">
+                    {cart.length} Jenis Item ({totalCartUnits} Unit)
+                  </span>
+                </div>
+
+                {/* Primary CTA */}
+                <button
+                  type="submit"
+                  disabled={cart.length === 0 || submitting}
+                  className="w-full min-h-[46px] px-4 py-3 rounded-xl bg-[#0F6352] hover:bg-[#0B4F41] disabled:bg-[#CBD5E1] disabled:text-slate-500 text-white text-xs font-semibold inline-flex items-center justify-center gap-2 shadow-xs transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0F6352]"
+                >
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="w-4 h-4 shrink-0"
+                  >
+                    <path d="M4 3h16v18l-2.5-1.5L15 21l-3-1.5L9 21l-2.5-1.5L4 21V3Z" />
+                    <path d="M8 9h8" />
+                    <path d="M8 13h5" />
+                  </svg>
+                  <span>
+                    {submitting
+                      ? "Memproses Transaksi Atomik..."
+                      : "Bayar & Kirim Struk WA →"}
+                  </span>
+                </button>
+
+                <div className="text-[11px] text-[#64748B] flex items-center justify-center gap-1.5">
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.9"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="w-3.5 h-3.5 text-[#0F6352] shrink-0"
+                  >
+                    <path d="m7 7 10 10-5 5V2l5 5L7 17" />
+                  </svg>
+                  <span>
+                    Auto-cetak struk Bluetooth &amp; potong stok realtime
+                  </span>
+                </div>
+              </div>
+            </form>
+          </aside>
+        </div>
       </div>
 
       {/* Thermal Receipt Modal (Reference Design without Logo) */}
@@ -1280,12 +1457,12 @@ export default function SmartPosView({
           const dateYmd = Number.isNaN(dateObj.getTime())
             ? rawIso.slice(0, 10)
             : `${dateObj.getFullYear()}-${pad2(dateObj.getMonth() + 1)}-${pad2(
-                dateObj.getDate()
+                dateObj.getDate(),
               )}`;
           const timeHms = Number.isNaN(dateObj.getTime())
             ? "08:46:36"
             : `${pad2(dateObj.getHours())}:${pad2(dateObj.getMinutes())}:${pad2(
-                dateObj.getSeconds()
+                dateObj.getSeconds(),
               )}`;
 
           const rawPhone = receiptModal.storePhone || "08116800101";
@@ -1295,19 +1472,18 @@ export default function SmartPosView({
 
           const digitsFromDate = `${dateYmd.replace(/-/g, "")}${timeHms.replace(
             /:/g,
-            ""
+            "",
           )}`;
           const invDigits =
             receiptModal.invoiceNumber.replace(/\D/g, "") || "01";
           const numericRefId = `164135${digitsFromDate}${invDigits.slice(-2)}`;
 
-          const seqSuffix =
-            receiptModal.invoiceNumber.split("-").pop() || "1";
+          const seqSuffix = receiptModal.invoiceNumber.split("-").pop() || "1";
           const queueNoLabel = `No.0-${Number(seqSuffix) || seqSuffix}`;
 
           const totalQtyUnits = receiptModal.items.reduce(
             (acc, it) => acc + it.soldQty,
-            0
+            0,
           );
 
           const payLabel =
@@ -1320,11 +1496,11 @@ export default function SmartPosView({
           const cleanInvCode = receiptModal.invoiceNumber.replace(/^#/, "");
           const fallbackPrintHeightMm = Math.max(
             158,
-            138 + receiptModal.items.length * 16
+            138 + receiptModal.items.length * 16,
           );
           const effectivePrintHeightMm = Math.max(
             fallbackPrintHeightMm,
-            measuredReceiptHeightMm ?? 0
+            measuredReceiptHeightMm ?? 0,
           );
 
           return (
@@ -1431,7 +1607,7 @@ export default function SmartPosView({
                       const unitLabel =
                         item.soldUnitType === "BOX" ? "dus" : "pack";
                       const effectiveUnitPrice = Math.round(
-                        item.subtotalAmount / Math.max(1, item.soldQty)
+                        item.subtotalAmount / Math.max(1, item.soldQty),
                       );
                       return (
                         <div key={item.id} className="space-y-0.5">
@@ -1551,6 +1727,52 @@ export default function SmartPosView({
             </div>
           );
         })()}
+
+      {/* QRIS Enlarged Preview Modal */}
+      {showQrisModal && qrisImageUrl && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="pos-qris-modal-title"
+          className="fixed inset-0 z-50 bg-slate-900/55 flex items-center justify-center p-4"
+        >
+          <div className="bg-white rounded-2xl border border-[#E2E8F0] max-w-sm w-full p-5 space-y-4 text-center shadow-xl">
+            <div className="space-y-1">
+              <h3
+                id="pos-qris-modal-title"
+                className="text-base font-bold text-[#0F172A]"
+              >
+                Scan QRIS Pembayaran
+              </h3>
+              <p className="text-xs text-[#64748B]">
+                Total Tagihan:{" "}
+                <strong className="text-[#0F6352] font-mono">
+                  {formatRp(cartSubtotal)}
+                </strong>
+              </p>
+            </div>
+
+            <div className="bg-[#F8FAFC] border border-[#E5E9EC] rounded-xl p-3 flex items-center justify-center">
+              <Image
+                src={qrisImageUrl}
+                alt="Kode QRIS toko ukuran besar"
+                width={260}
+                height={260}
+                unoptimized
+                className="max-h-64 w-auto object-contain rounded-lg"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowQrisModal(false)}
+              className="w-full min-h-[44px] px-4 py-2 rounded-xl bg-[#0F6352] hover:bg-[#0B4F41] text-white text-xs font-semibold"
+            >
+              Tutup
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

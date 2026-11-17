@@ -8,6 +8,7 @@ import React, {
   forwardRef,
   useImperativeHandle,
 } from "react";
+import { useGooeyToastFlash } from "./GooeyToastProvider";
 
 interface CommandCenterSummary {
   store: {
@@ -193,6 +194,8 @@ const CommandCenterDashboard = forwardRef<
   const [txSearch, setTxSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  useGooeyToastFlash(null, errorMsg, undefined, () => setErrorMsg(null));
 
   // Modals
   const [showOnboardingModal, setShowOnboardingModal] = useState(false);
@@ -692,22 +695,6 @@ const CommandCenterDashboard = forwardRef<
           </button>
         </div>
       </div>
-
-      {errorMsg && (
-        <div
-          role="alert"
-          className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-2.5 text-xs font-medium flex items-center justify-between gap-2"
-        >
-          <span>{errorMsg}</span>
-          <button
-            type="button"
-            onClick={fetchDashboardData}
-            className="px-3 py-1 rounded-lg bg-red-600 text-white font-semibold"
-          >
-            Muat Ulang
-          </button>
-        </div>
-      )}
 
       {/* Role Notice Banner if viewing as CASHIER */}
       {summary.viewerRole === "CASHIER" && (

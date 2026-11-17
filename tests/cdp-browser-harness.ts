@@ -127,14 +127,17 @@ export class RealChromeBrowser {
     await this.setViewport(1440, 900);
   }
 
-  public async send(
+  public async send<T = Record<string, unknown>>(
     method: string,
     params: Record<string, unknown> = {}
-  ): Promise<any> {
+  ): Promise<T> {
     if (!this.ws) throw new Error("Browser WebSocket is not connected.");
     const id = ++this.msgId;
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+    return new Promise<T>((resolve, reject) => {
+      this.pending.set(id, {
+        resolve: resolve as (val: unknown) => void,
+        reject,
+      });
       this.ws!.send(JSON.stringify({ id, method, params }));
     });
   }
@@ -170,8 +173,14 @@ export class RealChromeBrowser {
     await new Promise((r) => setTimeout(r, ms));
   }
 
-  public async evaluate<T = any>(expression: string): Promise<T> {
-    const res = await this.send("Runtime.evaluate", {
+  public async evaluate<T = unknown>(expression: string): Promise<T> {
+    const res = await this.send<{
+      exceptionDetails?: {
+        exception?: { description?: string };
+        text?: string;
+      };
+      result?: { value?: T };
+    }>("Runtime.evaluate", {
       expression,
       returnByValue: true,
       awaitPromise: true,
@@ -339,7 +348,7 @@ export class RealChromeBrowser {
       fs.mkdirSync(dir, { recursive: true });
     }
     const filePath = path.join(dir, fileName);
-    const res = await this.send("Page.captureScreenshot", {
+    const res = await this.send<{ data?: string }>("Page.captureScreenshot", {
       format: "png",
       fromSurface: true,
     });

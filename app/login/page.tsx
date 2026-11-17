@@ -3,13 +3,11 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import React, { useEffect, useState } from "react";
-import AuthLedgerShell, {
-  AuthSessionCheckingScreen,
-} from "../components/AuthLedgerShell";
+import AuthLedgerShell from "../components/AuthLedgerShell";
+import { useGooeyToastFlash } from "../components/GooeyToastProvider";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [checkingSession, setCheckingSession] = useState(true);
   const [mode, setMode] = useState<"LOGIN" | "FORGOT_PASSWORD">("LOGIN");
 
   const [identifier, setIdentifier] = useState("");
@@ -18,6 +16,13 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
+
+  useGooeyToastFlash(
+    feedbackMsg,
+    errorMsg,
+    () => setFeedbackMsg(null),
+    () => setErrorMsg(null)
+  );
 
   // Forgot & Reset Password states
   const [forgotIdentifier, setForgotIdentifier] = useState("");
@@ -175,24 +180,6 @@ export default function LoginPage() {
                 stok FEFO, dan pembukuan toko.
               </p>
             </div>
-
-            {feedbackMsg && (
-              <div
-                role="status"
-                className="p-3.5 rounded-lg bg-[#ECFDF5] border border-[#A7F3D0] text-[#0D4A39] text-sm font-medium"
-              >
-                {feedbackMsg}
-              </div>
-            )}
-
-            {errorMsg && (
-              <div
-                role="alert"
-                className="p-3.5 rounded-lg bg-[#FEF2F2] border border-[#FECACA] text-[#991B1B] text-sm font-medium"
-              >
-                {errorMsg}
-              </div>
-            )}
 
             <form
               onSubmit={handleLoginSubmit}
@@ -352,24 +339,6 @@ export default function LoginPage() {
                 Kembali
               </button>
             </div>
-
-            {feedbackMsg && (
-              <div
-                role="status"
-                className="p-3.5 rounded-lg bg-[#ECFDF5] border border-[#A7F3D0] text-[#0D4A39] text-sm font-medium"
-              >
-                {feedbackMsg}
-              </div>
-            )}
-
-            {errorMsg && (
-              <div
-                role="alert"
-                className="p-3.5 rounded-lg bg-[#FEF2F2] border border-[#FECACA] text-[#991B1B] text-sm font-medium"
-              >
-                {errorMsg}
-              </div>
-            )}
 
             <form
               onSubmit={handleRequestResetToken}

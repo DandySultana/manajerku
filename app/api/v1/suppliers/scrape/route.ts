@@ -1,7 +1,40 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveVerifiedRequestActor } from "@/lib/auth/request-auth";
-import { scrapeSuppliersWithPlaywright } from "@/lib/services/playwright-supplier-scraper";
+import {
+  getLatestPlaywrightScrapeRun,
+  scrapeSuppliersWithPlaywright,
+} from "@/lib/services/playwright-supplier-scraper";
 import { ManajerkuAppError } from "@/lib/services/platform-core";
+
+export async function GET(req: NextRequest) {
+  try {
+    const storeIdParam = req.nextUrl.searchParams.get("storeId") || undefined;
+    const actor = resolveVerifiedRequestActor(req, storeIdParam);
+    const latestRun = getLatestPlaywrightScrapeRun(actor.storeId);
+    return NextResponse.json({
+      success: true,
+      data: latestRun,
+    });
+  } catch (err) {
+    if (err instanceof ManajerkuAppError) {
+      return NextResponse.json(
+        { success: false, error: { code: err.code, message: err.message } },
+        { status: err.statusCode }
+      );
+    }
+    return NextResponse.json(
+      {
+        success: false,
+        error: {
+          code: "INTERNAL_ERROR",
+          message:
+            err instanceof Error ? err.message : "Gagal memuat riwayat scraping.",
+        },
+      },
+      { status: 500 }
+    );
+  }
+}
 
 export async function POST(req: NextRequest) {
   try {

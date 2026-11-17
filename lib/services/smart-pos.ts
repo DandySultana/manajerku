@@ -63,7 +63,12 @@ export function getPosCatalog(
     culinary_segment: string;
   }>;
 
+  const storeRow = db
+    .prepare("SELECT qris_image_data_url FROM stores WHERE id = ?")
+    .get(storeId) as { qris_image_data_url: string | null } | undefined;
+
   return {
+    storeQrisImageUrl: storeRow?.qris_image_data_url || null,
     products,
     resellers: resellers.map((r) => ({
       id: r.id,

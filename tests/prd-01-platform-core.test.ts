@@ -81,7 +81,7 @@ test("PRD-01 Suite: Platform Core, Command Center Dashboard & Access Control", a
     );
 
     // Wrong OTP verification fails atomically without creating store
-    const otpRes = requestOnboardingOtp("081377776666");
+    requestOnboardingOtp("081377776666");
     assert.throws(
       () =>
         completeStoreOnboarding({

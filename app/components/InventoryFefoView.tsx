@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import { formatRp } from "./CommandCenterDashboard";
+import { useGooeyToastFlash } from "./GooeyToastProvider";
 
 interface ProductInventoryItem {
   id: string;
@@ -118,6 +119,13 @@ export default function InventoryFefoView({
   const [loading, setLoading] = useState(true);
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  useGooeyToastFlash(
+    feedbackMsg,
+    errorMsg,
+    () => setFeedbackMsg(null),
+    () => setErrorMsg(null)
+  );
   const [broadcasting, setBroadcasting] = useState(false);
 
   // Modals
@@ -607,40 +615,6 @@ export default function InventoryFefoView({
           </button>
         </div>
       </div>
-
-      {feedbackMsg && (
-        <div
-          role="status"
-          className="bg-[#EBF8F2] border border-[#CCE8DB] text-[#0F6352] px-4 py-3 rounded-xl text-xs font-semibold flex items-center justify-between gap-2"
-        >
-          <span>{feedbackMsg}</span>
-          <button
-            type="button"
-            aria-label="Tutup pesan status"
-            onClick={() => setFeedbackMsg(null)}
-            className="min-h-[44px] min-w-[44px] sm:min-h-[36px] sm:min-w-[36px] rounded-lg hover:bg-[#D7F0E6] font-bold flex items-center justify-center"
-          >
-            ✕
-          </button>
-        </div>
-      )}
-
-      {errorMsg && (
-        <div
-          role="alert"
-          className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-xl text-xs font-semibold flex items-center justify-between gap-2"
-        >
-          <span>{errorMsg}</span>
-          <button
-            type="button"
-            aria-label="Tutup pesan galat"
-            onClick={() => setErrorMsg(null)}
-            className="min-h-[44px] min-w-[44px] sm:min-h-[36px] sm:min-w-[36px] rounded-lg hover:bg-red-100 text-red-700 font-bold flex items-center justify-center"
-          >
-            ✕
-          </button>
-        </div>
-      )}
 
       {/* 4 KPI Cards Row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">

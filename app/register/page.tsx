@@ -3,13 +3,11 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import React, { useEffect, useState } from "react";
-import AuthLedgerShell, {
-  AuthSessionCheckingScreen,
-} from "../components/AuthLedgerShell";
+import AuthLedgerShell from "../components/AuthLedgerShell";
+import { useGooeyToastFlash } from "../components/GooeyToastProvider";
 
 export default function RegisterPage() {
   const router = useRouter();
-  const [checkingSession, setCheckingSession] = useState(true);
 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -26,6 +24,8 @@ export default function RegisterPage() {
 
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  useGooeyToastFlash(null, errorMsg, undefined, () => setErrorMsg(null));
 
   useEffect(() => {
     const controller = new AbortController();
@@ -76,7 +76,7 @@ export default function RegisterPage() {
         setErrorMsg(json.error?.message || "Gagal mendaftarkan akun.");
         setLoading(false);
       } else {
-        window.location.assign("/");
+        window.location.href = "/";
       }
     } catch (err) {
       setErrorMsg(
@@ -103,15 +103,6 @@ export default function RegisterPage() {
             kulakan) dan pencatatan beban listrik freezer harian.
           </p>
         </div>
-
-        {errorMsg && (
-          <div
-            role="alert"
-            className="p-3.5 rounded-lg bg-[#FEF2F2] border border-[#FECACA] text-[#991B1B] text-sm font-medium"
-          >
-            {errorMsg}
-          </div>
-        )}
 
         <form
           onSubmit={handleRegisterSubmit}

@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS stores (
   rfq_timeout_minutes INTEGER NOT NULL DEFAULT 15 CHECK (rfq_timeout_minutes >= 1),
   subscription_tier TEXT NOT NULL DEFAULT 'FREEMIUM_STARTER' CHECK (subscription_tier IN ('FREEMIUM_STARTER', 'MANAJERKU_PRO')),
   subscription_expires_at TEXT,
+  qris_image_data_url TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -361,5 +362,16 @@ CREATE TABLE IF NOT EXISTS daily_financial_snapshots (
   net_profit_amount INTEGER NOT NULL DEFAULT 0,
   freezer_elec_cost INTEGER NOT NULL DEFAULT 45000,
   UNIQUE (store_id, snapshot_date)
+);
+
+CREATE TABLE IF NOT EXISTS playwright_scrape_runs (
+  id TEXT PRIMARY KEY,
+  store_id TEXT NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+  search_query TEXT NOT NULL,
+  raw_keyword TEXT NOT NULL,
+  location_hint TEXT,
+  rfq_code TEXT,
+  results_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 `;

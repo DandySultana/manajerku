@@ -70,6 +70,27 @@ export function getDb(): DatabaseSync {
     );
   }
 
+  const storeCols = db.prepare("PRAGMA table_info(stores)").all() as Array<{
+    name: string;
+  }>;
+  const storeColNames = new Set(storeCols.map((c) => c.name));
+  if (!storeColNames.has("qris_image_data_url")) {
+    db.exec("ALTER TABLE stores ADD COLUMN qris_image_data_url TEXT;");
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS playwright_scrape_runs (
+      id TEXT PRIMARY KEY,
+      store_id TEXT NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+      search_query TEXT NOT NULL,
+      raw_keyword TEXT NOT NULL,
+      location_hint TEXT,
+      rfq_code TEXT,
+      results_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
   globalDbInstance = db;
   currentDbPath = targetPath;
 

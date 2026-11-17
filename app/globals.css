@@ -40,6 +40,13 @@
   }
 }
 
+[data-sonner-toast][data-x-position="right"] {
+  width: fit-content !important;
+  max-width: calc(100vw - 32px) !important;
+  left: auto !important;
+  right: 0 !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

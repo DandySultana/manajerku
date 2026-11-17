@@ -13,6 +13,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { type AuthSessionData } from "./AuthAccountView";
 import { AuthSessionCheckingScreen } from "./AuthLedgerShell";
+import { useGooeyToastFlash } from "./GooeyToastProvider";
 
 export type ActiveTabKey =
   | "dashboard"
@@ -250,6 +251,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [tempInput, setTempInput] = useState("-18.4");
   const [tempFeedback, setTempFeedback] = useState<string | null>(null);
   const [tempSaving, setTempSaving] = useState(false);
+
+  useGooeyToastFlash(
+    tempFeedback && !tempFeedback.startsWith("Gagal") ? tempFeedback : null,
+    tempFeedback && tempFeedback.startsWith("Gagal") ? tempFeedback : null,
+    () => setTempFeedback(null),
+    () => setTempFeedback(null)
+  );
 
   const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
   const [preselectedSupplierProductId, setPreselectedSupplierProductId] =
@@ -642,9 +650,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               <span className="text-[15px] font-bold text-[#0F172A] tracking-tight truncate">
                 {displayBrandName}
               </span>
-              <span className="hidden sm:inline-flex items-center px-3 py-1 rounded-full bg-[#D7F0E6] text-[#0F6352] text-xs font-semibold whitespace-nowrap">
-                {authSession.store.branchName} • {authSession.store.coldChainCode}
-              </span>
             </div>
 
             <div className="flex items-center gap-2.5 shrink-0">
@@ -760,7 +765,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </header>
 
           {/* Active Route View */}
-          <main className="flex-1 p-4 sm:p-6 lg:p-7 pb-24 md:pb-8 print:p-0 print:pb-0 max-w-[1320px] print:max-w-full w-full mx-auto">
+          <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-7 pb-24 md:pb-8 print:p-0 print:pb-0 max-w-[1320px] print:max-w-full w-full mx-auto">
             {children}
           </main>
         </div>
@@ -851,11 +856,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   className="w-full px-3 py-2 min-h-[42px] rounded-xl border border-[#CBD5E1] text-sm font-bold text-[#0F172A] focus:outline-none focus:border-[#0F6352]"
                 />
               </div>
-              {tempFeedback && (
-                <div className="text-xs font-semibold text-[#0F6352] bg-[#EBF8F2] border border-[#CCE8DB] p-2.5 rounded-xl">
-                  {tempFeedback}
-                </div>
-              )}
               <div className="flex justify-end gap-2">
                 <button
                   type="button"

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Plus_Jakarta_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
+import GooeyToastViewport from "./components/GooeyToastProvider";
 
 const plusJakarta = Plus_Jakarta_Sans({
   variable: "--font-sans-app",
@@ -27,6 +28,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${plusJakarta.variable} ${ibmPlexMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-[#F7F6F2] text-[#181C1B]">
+        <GooeyToastViewport />
         {children}
       </body>
     </html>

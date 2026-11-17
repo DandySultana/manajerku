@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import React, { useEffect, useState } from "react";
 import AuthLedgerShell from "../components/AuthLedgerShell";
@@ -12,6 +11,7 @@ export default function LoginPage() {
 
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -79,7 +79,7 @@ export default function LoginPage() {
       if (!json.success) {
         setErrorMsg(
           json.error?.message ||
-            "Email, nomor WhatsApp, atau password yang Anda masukkan salah.",
+            "Email, nomor WhatsApp, atau password yang Anda masukkan salah."
         );
         setLoading(false);
       } else {
@@ -87,7 +87,7 @@ export default function LoginPage() {
       }
     } catch (err) {
       setErrorMsg(
-        err instanceof Error ? err.message : "Gagal menghubungi server.",
+        err instanceof Error ? err.message : "Gagal menghubungi server."
       );
       setLoading(false);
     }
@@ -110,12 +110,12 @@ export default function LoginPage() {
       } else {
         setResetToken(json.data.resetToken);
         setFeedbackMsg(
-          `Token pemulihan dibuat untuk ${json.data.targetEmailOrPhone}. Masukkan password baru di bawah.`,
+          `Token pemulihan dibuat untuk ${json.data.targetEmailOrPhone}. Masukkan password baru di bawah.`
         );
       }
     } catch (err) {
       setErrorMsg(
-        err instanceof Error ? err.message : "Gagal menghubungi server.",
+        err instanceof Error ? err.message : "Gagal menghubungi server."
       );
     } finally {
       setLoading(false);
@@ -143,7 +143,7 @@ export default function LoginPage() {
         setErrorMsg(json.error?.message || "Gagal memperbarui password.");
       } else {
         setFeedbackMsg(
-          "Password berhasil diperbarui. Silakan masuk dengan password baru Anda.",
+          "Password berhasil diperbarui. Silakan masuk dengan password baru Anda."
         );
         setIdentifier(forgotIdentifier);
         setPassword("");
@@ -154,7 +154,7 @@ export default function LoginPage() {
       }
     } catch (err) {
       setErrorMsg(
-        err instanceof Error ? err.message : "Gagal menghubungi server.",
+        err instanceof Error ? err.message : "Gagal menghubungi server."
       );
     } finally {
       setLoading(false);
@@ -164,20 +164,24 @@ export default function LoginPage() {
   return (
     <AuthLedgerShell
       headerActionHref="/register"
-      headerActionLabel="Daftar Toko"
-      headerPromptText="Belum terdaftar?"
-      maxWidthClass="max-w-[440px]"
+      headerActionLabel="Daftarkan Toko"
+      headerPromptText="Belum punya akun toko?"
+      maxWidthClass="max-w-[400px]"
+      quoteTagline="MANAJERKU COLD-CHAIN"
+      heroLines={["Kendalikan", "Stok & Kas", "Lebih Cerdas"]}
+      heroSubtitle="Anda dapat mengoptimalkan seluruh rantai dingin toko jika memantau stok FEFO, kasir multi-satuan, dan arus kas kulakan secara disiplin."
     >
-      <div className="bg-[#FFFFFF] border border-[#E3E1DA] rounded-xl p-6 sm:p-8 space-y-6">
+      <div className="space-y-7">
         {mode === "LOGIN" ? (
           <>
-            <div className="space-y-1.5">
-              <h1 className="text-2xl font-semibold tracking-tight text-[#181C1B]">
+            {/* Centered Editorial Heading */}
+            <div className="text-center space-y-2">
+              <h1 className="font-serif text-[32px] sm:text-[36px] font-medium tracking-tight text-[#0F172A] leading-tight">
                 Masuk ke Manajerku
               </h1>
-              <p className="text-sm text-[#555D5B] leading-relaxed">
-                Gunakan email atau nomor WhatsApp terdaftar untuk membuka kasir,
-                stok FEFO, dan pembukuan toko.
+              <p className="text-xs sm:text-[13px] text-[#64748B] leading-relaxed">
+                Masukkan email atau nomor WhatsApp dan password untuk mengakses
+                akun toko Anda
               </p>
             </div>
 
@@ -189,7 +193,7 @@ export default function LoginPage() {
               <div className="space-y-1.5">
                 <label
                   htmlFor="login-identifier"
-                  className="block text-sm font-medium text-[#181C1B]"
+                  className="block text-xs font-semibold text-[#1E293B]"
                 >
                   Email atau Nomor WhatsApp
                 </label>
@@ -201,31 +205,18 @@ export default function LoginPage() {
                   required
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
-                  placeholder="mhukmanfathir@gmail.com atau +6282298606699"
-                  className="w-full min-h-[44px] px-3.5 py-2.5 rounded-lg border border-[#D4D1C7] bg-[#FFFFFF] text-sm text-[#181C1B] placeholder:text-[#767E7B] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#115E49] focus:border-[#115E49]"
+                  placeholder="Masukkan email atau nomor WhatsApp"
+                  className="w-full h-11 px-4 rounded-xl bg-[#F4F6F5] hover:bg-[#EDF1EF] focus:bg-white border border-transparent focus:border-[#0F6352] text-sm text-[#0F172A] placeholder:text-[#94A3B8] transition-all outline-none focus:ring-3 focus:ring-[#0F6352]/12"
                 />
               </div>
 
               <div className="space-y-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <label
-                    htmlFor="login-password"
-                    className="block text-sm font-medium text-[#181C1B]"
-                  >
-                    Password
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMode("FORGOT_PASSWORD");
-                      setErrorMsg(null);
-                      setFeedbackMsg(null);
-                    }}
-                    className="min-h-[44px] px-1 inline-flex items-center text-sm font-medium text-[#115E49] hover:text-[#0D4A39] underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#115E49] rounded"
-                  >
-                    Lupa password?
-                  </button>
-                </div>
+                <label
+                  htmlFor="login-password"
+                  className="block text-xs font-semibold text-[#1E293B]"
+                >
+                  Password
+                </label>
 
                 <div className="relative flex items-center">
                   <input
@@ -236,8 +227,8 @@ export default function LoginPage() {
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Masukkan password akun"
-                    className="w-full min-h-[44px] pl-3.5 pr-24 py-2.5 rounded-lg border border-[#D4D1C7] bg-[#FFFFFF] text-sm text-[#181C1B] placeholder:text-[#767E7B] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#115E49] focus:border-[#115E49]"
+                    placeholder="Masukkan password Anda"
+                    className="w-full h-11 pl-4 pr-11 rounded-xl bg-[#F4F6F5] hover:bg-[#EDF1EF] focus:bg-white border border-transparent focus:border-[#0F6352] text-sm text-[#0F172A] placeholder:text-[#94A3B8] transition-all outline-none focus:ring-3 focus:ring-[#0F6352]/12"
                   />
                   <button
                     type="button"
@@ -248,96 +239,116 @@ export default function LoginPage() {
                         : "Tampilkan password"
                     }
                     onClick={() => setShowPassword((prev) => !prev)}
-                    className="absolute right-1 min-h-[44px] px-2.5 inline-flex items-center justify-center text-xs font-medium text-[#555D5B] hover:text-[#181C1B] rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#115E49]"
+                    className="absolute right-2.5 w-8 h-8 inline-flex items-center justify-center text-[#64748B] hover:text-[#0F172A] rounded-lg transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352]"
                   >
-                    {showPassword ? "Sembunyikan" : "Tampilkan"}
+                    {showPassword ? (
+                      <svg
+                        aria-hidden="true"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="w-4 h-4"
+                      >
+                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                        <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                        <line x1="1" y1="1" x2="23" y2="23" />
+                      </svg>
+                    ) : (
+                      <svg
+                        aria-hidden="true"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="w-4 h-4"
+                      >
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+
+                {/* Remember Me & Forgot Password Row */}
+                <div className="flex items-center justify-between pt-1.5 text-xs">
+                  <label className="inline-flex items-center gap-2 text-[#475569] select-none">
+                    <input
+                      type="checkbox"
+                      checked={rememberMe}
+                      onChange={(e) => setRememberMe(e.target.checked)}
+                      className="w-3.5 h-3.5 rounded border-[#CBD5E1] accent-[#0F6352]"
+                    />
+                    <span>Ingat saya</span>
+                  </label>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode("FORGOT_PASSWORD");
+                      setErrorMsg(null);
+                      setFeedbackMsg(null);
+                    }}
+                    className="font-medium text-[#1E293B] hover:text-[#0F6352] transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352] rounded"
+                  >
+                    Lupa Password?
                   </button>
                 </div>
               </div>
 
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full min-h-[44px] px-4 py-2.5 rounded-lg bg-[#115E49] hover:bg-[#0D4A39] active:bg-[#093629] disabled:bg-[#9CA3AF] text-white text-sm font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#115E49]"
-              >
-                {loading ? "Memverifikasi..." : "Masuk ke Dashboard"}
-              </button>
+              <div className="pt-2 space-y-2.5">
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full h-11 px-4 rounded-xl bg-[#0F6352] hover:bg-[#0B4F41] active:bg-[#083B30] disabled:bg-[#94A3B8] text-white text-sm font-semibold shadow-[0_6px_18px_rgba(15,99,82,0.22)] transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0F6352]"
+                >
+                  {loading ? "Memverifikasi..." : "Masuk ke Dashboard"}
+                </button>
+
+                {/* Quick-Fill Demo Accounts matching Secondary Button Layout */}
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIdentifier("mhukmanfathir@gmail.com");
+                      setPassword("Orienix2026!");
+                      setErrorMsg(null);
+                    }}
+                    className="h-10 px-3 rounded-xl border border-[#E2E8F0] bg-white hover:bg-[#F8FAFC] active:bg-[#F1F5F9] text-xs font-semibold text-[#1E293B] inline-flex items-center justify-center gap-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352]"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-[#0F6352] shrink-0" />
+                    <span className="truncate">Pemilik Toko (Owner)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIdentifier("dandy@manajerku.id");
+                      setPassword("Kasir2026!");
+                      setErrorMsg(null);
+                    }}
+                    className="h-10 px-3 rounded-xl border border-[#E2E8F0] bg-white hover:bg-[#F8FAFC] active:bg-[#F1F5F9] text-xs font-semibold text-[#1E293B] inline-flex items-center justify-center gap-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352]"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-[#0D9488] shrink-0" />
+                    <span className="truncate">Staf Kasir 01 (Cashier)</span>
+                  </button>
+                </div>
+              </div>
             </form>
-
-            {/* Quick-fill seeded test accounts for evaluation */}
-            <div className="pt-5 border-t border-[#E3E1DA] space-y-2.5">
-              <div className="text-xs font-medium text-[#555D5B]">
-                Isi cepat kredensial uji:
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIdentifier("mhukmanfathir@gmail.com");
-                    setPassword("Orienix2026!");
-                    setErrorMsg(null);
-                  }}
-                  className="min-h-[44px] px-3 py-2 rounded-lg border border-[#E3E1DA] bg-[#F7F6F2] hover:bg-[#ECE9E0] active:bg-[#E3DFD3] text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#115E49]"
-                >
-                  <div className="text-xs font-semibold text-[#181C1B]">
-                    Pemilik Toko (Owner)
-                  </div>
-                  <div className="text-[11px] font-mono text-[#555D5B] truncate">
-                    mhukmanfathir@gmail.com
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIdentifier("dandy@manajerku.id");
-                    setPassword("Kasir2026!");
-                    setErrorMsg(null);
-                  }}
-                  className="min-h-[44px] px-3 py-2 rounded-lg border border-[#E3E1DA] bg-[#F7F6F2] hover:bg-[#ECE9E0] active:bg-[#E3DFD3] text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#115E49]"
-                >
-                  <div className="text-xs font-semibold text-[#181C1B]">
-                    Staf Kasir 01 (Cashier)
-                  </div>
-                  <div className="text-[11px] font-mono text-[#555D5B] truncate">
-                    dandy@manajerku.id
-                  </div>
-                </button>
-              </div>
-            </div>
-
-            <div className="pt-4 border-t border-[#E3E1DA] text-sm text-[#555D5B] flex items-center justify-between gap-2">
-              <span>Toko baru?</span>
-              <Link
-                href="/register"
-                className="min-h-[44px] inline-flex items-center font-semibold text-[#115E49] hover:text-[#0D4A39] underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#115E49] rounded"
-              >
-                Daftarkan toko baru
-              </Link>
-            </div>
           </>
         ) : (
           <div className="space-y-5">
-            <div className="flex items-start justify-between gap-3 pb-4 border-b border-[#E3E1DA]">
-              <div className="space-y-1">
-                <h1 className="text-xl font-semibold tracking-tight text-[#181C1B]">
-                  Pulihkan akses akun
-                </h1>
-                <p className="text-sm text-[#555D5B]">
-                  Buat token pemulihan untuk mengatur ulang password akun Anda.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setMode("LOGIN");
-                  setErrorMsg(null);
-                  setFeedbackMsg(null);
-                }}
-                className="min-h-[44px] px-2.5 inline-flex items-center text-sm font-medium text-[#115E49] hover:text-[#0D4A39] underline underline-offset-4 shrink-0 rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#115E49]"
-              >
-                Kembali
-              </button>
+            <div className="text-center space-y-1.5">
+              <h1 className="font-serif text-[28px] sm:text-[32px] font-medium tracking-tight text-[#0F172A]">
+                Pulihkan Akses Akun
+              </h1>
+              <p className="text-xs sm:text-[13px] text-[#64748B]">
+                Buat token pemulihan untuk mengatur ulang password akun toko Anda
+              </p>
             </div>
 
             <form
@@ -347,11 +358,11 @@ export default function LoginPage() {
             >
               <label
                 htmlFor="forgot-identifier"
-                className="block text-sm font-medium text-[#181C1B]"
+                className="block text-xs font-semibold text-[#1E293B]"
               >
                 Email atau Nomor WhatsApp Terdaftar
               </label>
-              <div className="flex flex-col sm:flex-row gap-2.5">
+              <div className="flex flex-col sm:flex-row gap-2">
                 <input
                   id="forgot-identifier"
                   type="text"
@@ -359,12 +370,12 @@ export default function LoginPage() {
                   value={forgotIdentifier}
                   onChange={(e) => setForgotIdentifier(e.target.value)}
                   placeholder="mhukmanfathir@gmail.com"
-                  className="flex-1 min-h-[44px] px-3.5 py-2.5 rounded-lg border border-[#D4D1C7] bg-[#FFFFFF] text-sm text-[#181C1B] placeholder:text-[#767E7B] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#115E49] focus:border-[#115E49]"
+                  className="flex-1 h-11 px-4 rounded-xl bg-[#F4F6F5] focus:bg-white border border-transparent focus:border-[#0F6352] text-sm text-[#0F172A] placeholder:text-[#94A3B8] outline-none"
                 />
                 <button
                   type="submit"
                   disabled={loading}
-                  className="min-h-[44px] px-4 py-2.5 rounded-lg bg-[#181C1B] hover:bg-[#2E3432] active:bg-[#0F1211] disabled:bg-[#9CA3AF] text-white text-sm font-semibold transition-colors shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#115E49]"
+                  className="h-11 px-4 rounded-xl bg-[#0F6352] hover:bg-[#0B4F41] disabled:bg-[#94A3B8] text-white text-xs font-semibold transition-colors shrink-0"
                 >
                   {loading ? "Memproses..." : "Minta Token"}
                 </button>
@@ -375,12 +386,12 @@ export default function LoginPage() {
               <form
                 onSubmit={handleExecuteResetPassword}
                 aria-busy={loading}
-                className="pt-5 border-t border-[#E3E1DA] space-y-4"
+                className="pt-4 border-t border-[#E2E8F0] space-y-3.5"
               >
-                <div className="space-y-1.5">
+                <div className="space-y-1">
                   <label
                     htmlFor="reset-token"
-                    className="block text-sm font-medium text-[#181C1B]"
+                    className="block text-xs font-semibold text-[#1E293B]"
                   >
                     Token Pemulihan
                   </label>
@@ -390,14 +401,14 @@ export default function LoginPage() {
                     required
                     value={resetToken}
                     onChange={(e) => setResetToken(e.target.value)}
-                    className="w-full min-h-[44px] px-3.5 py-2.5 rounded-lg border border-[#D4D1C7] bg-[#F7F6F2] text-sm font-mono text-[#181C1B] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#115E49]"
+                    className="w-full h-11 px-4 rounded-xl bg-[#F4F6F5] text-sm font-mono text-[#0F172A] outline-none"
                   />
                 </div>
 
-                <div className="space-y-1.5">
+                <div className="space-y-1">
                   <label
                     htmlFor="reset-new-password"
-                    className="block text-sm font-medium text-[#181C1B]"
+                    className="block text-xs font-semibold text-[#1E293B]"
                   >
                     Password Baru
                   </label>
@@ -409,28 +420,23 @@ export default function LoginPage() {
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
                       placeholder="Minimal 8 karakter huruf dan angka"
-                      className="w-full min-h-[44px] pl-3.5 pr-24 py-2.5 rounded-lg border border-[#D4D1C7] bg-[#FFFFFF] text-sm text-[#181C1B] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#115E49]"
+                      className="w-full h-11 pl-4 pr-11 rounded-xl bg-[#F4F6F5] focus:bg-white border border-transparent focus:border-[#0F6352] text-sm text-[#0F172A] outline-none"
                     />
                     <button
                       type="button"
                       aria-pressed={showNewPassword}
-                      aria-label={
-                        showNewPassword
-                          ? "Sembunyikan password baru"
-                          : "Tampilkan password baru"
-                      }
                       onClick={() => setShowNewPassword((prev) => !prev)}
-                      className="absolute right-1 min-h-[44px] px-2.5 inline-flex items-center justify-center text-xs font-medium text-[#555D5B] hover:text-[#181C1B] rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#115E49]"
+                      className="absolute right-2.5 w-8 h-8 inline-flex items-center justify-center text-[#64748B] hover:text-[#0F172A] rounded-lg"
                     >
-                      {showNewPassword ? "Sembunyikan" : "Tampilkan"}
+                      {showNewPassword ? "Sembunyi" : "Lihat"}
                     </button>
                   </div>
                 </div>
 
-                <div className="space-y-1.5">
+                <div className="space-y-1">
                   <label
                     htmlFor="reset-confirm-password"
-                    className="block text-sm font-medium text-[#181C1B]"
+                    className="block text-xs font-semibold text-[#1E293B]"
                   >
                     Konfirmasi Password Baru
                   </label>
@@ -441,19 +447,33 @@ export default function LoginPage() {
                     value={newPasswordConfirm}
                     onChange={(e) => setNewPasswordConfirm(e.target.value)}
                     placeholder="Ulangi password baru"
-                    className="w-full min-h-[44px] px-3.5 py-2.5 rounded-lg border border-[#D4D1C7] bg-[#FFFFFF] text-sm text-[#181C1B] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#115E49]"
+                    className="w-full h-11 px-4 rounded-xl bg-[#F4F6F5] focus:bg-white border border-transparent focus:border-[#0F6352] text-sm text-[#0F172A] outline-none"
                   />
                 </div>
 
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full min-h-[44px] px-4 py-2.5 rounded-lg bg-[#115E49] hover:bg-[#0D4A39] active:bg-[#093629] disabled:bg-[#9CA3AF] text-white text-sm font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#115E49]"
+                  className="w-full h-11 px-4 rounded-xl bg-[#0F6352] hover:bg-[#0B4F41] text-white text-sm font-semibold transition-colors"
                 >
                   {loading ? "Menyimpan..." : "Simpan Password Baru"}
                 </button>
               </form>
             )}
+
+            <div className="text-center pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setMode("LOGIN");
+                  setErrorMsg(null);
+                  setFeedbackMsg(null);
+                }}
+                className="text-xs font-semibold text-[#0F6352] hover:underline"
+              >
+                ← Kembali ke halaman masuk
+              </button>
+            </div>
           </div>
         )}
       </div>

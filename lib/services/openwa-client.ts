@@ -46,6 +46,30 @@ export function formatPhoneToOpenWaChatId(phone: string): string {
   return `${normalizedDigits}@c.us`;
 }
 
+function formatOpenWaFailureNote(params: {
+  httpStatus?: number;
+  errorCode?: string;
+  rawError?: string;
+}): string {
+  const combined = `${params.errorCode || ""} ${params.rawError || ""}`.trim();
+  if (/NOT_REGISTERED_ON_WA|No LID for user|tidak terdaftar di WhatsApp/i.test(combined)) {
+    return "Nomor tidak terdaftar di WhatsApp";
+  }
+  if (/LICENSE_REQUIRED|Not a contact|restricted or premium license/i.test(combined)) {
+    return "Chat nomor baru belum didukung sesi OpenWA saat ini";
+  }
+  if (/STORE_NOT_READY|Execution context/i.test(combined)) {
+    return "WhatsApp Web sedang memuat ulang, coba sebentar lagi";
+  }
+  if (/timeout|abort/i.test(combined)) {
+    return "Timeout pengiriman BotWA";
+  }
+  if (params.httpStatus && params.httpStatus >= 400) {
+    return `Gagal kirim via BotWA (HTTP ${params.httpStatus})`;
+  }
+  return "BotWA belum terhubung di port 8085";
+}
+
 /**
  * Dispatch an outbound WhatsApp text message through OpenWA /sendText endpoint.
  * Non-blocking when OpenWA server is not running locally so SQLite logs & tests always succeed.
@@ -59,7 +83,7 @@ export async function dispatchOpenWaText(params: {
 
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2500);
+    const timer = setTimeout(() => controller.abort(), 16000);
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -85,20 +109,28 @@ export async function dispatchOpenWaText(params: {
       return {
         deliveredToOpenWa: true,
         chatId,
-        statusNote: "Terkirim melalui server OpenWA aktif.",
+        statusNote: "Terkirim via BotWA",
       };
     }
+    const errPayload = (await res.json().catch(() => null)) as {
+      code?: string;
+      error?: string;
+    } | null;
     return {
       deliveredToOpenWa: false,
       chatId,
-      statusNote: `Server OpenWA merespons HTTP ${res.status}. Pesan dicatat di log lokal.`,
+      statusNote: formatOpenWaFailureNote({
+        httpStatus: res.status,
+        errorCode: errPayload?.code,
+        rawError: errPayload?.error,
+      }),
     };
-  } catch {
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "";
     return {
       deliveredToOpenWa: false,
       chatId,
-      statusNote:
-        "Server OpenWA belum aktif di port lokal; pesan disimpan pada log aplikasi.",
+      statusNote: formatOpenWaFailureNote({ rawError: msg }),
     };
   }
 }

@@ -26,6 +26,7 @@ export interface ScrapedBusinessCandidate {
   mapsUrl: string;
   sourceEngine: "PLAYWRIGHT_GOOGLE_MAPS";
   openWaContacted: boolean;
+  openWaStatusNote?: string;
 }
 
 export interface PlaywrightScrapeSuppliersInput {
@@ -201,15 +202,15 @@ export async function scrapeSuppliersWithPlaywright(
 
     rawExtractedCards.push(...cards);
 
-    // If fewer than 3 cards have mobile numbers directly in the list snippet,
-    // click up to 3 cards to inspect the detail side pane for phone numbers
+    // If fewer than 5 cards have mobile numbers directly in the list snippet,
+    // click up to 8 cards to inspect the detail side pane for WhatsApp/mobile numbers
     const cardsWithMobileCount = rawExtractedCards.filter(
       (c) => extractMobilePhoneFromText(c.text) !== null
     ).length;
 
-    if (cardsWithMobileCount < 3 && rawExtractedCards.length > 0) {
+    if (cardsWithMobileCount < Math.min(5, maxResults) && rawExtractedCards.length > 0) {
       const cardHandles = await page.$$("div.Nv2PK a.hfpxzc");
-      const limit = Math.min(4, cardHandles.length);
+      const limit = Math.min(8, cardHandles.length);
       for (let i = 0; i < limit; i++) {
         if (
           rawExtractedCards[i] &&
@@ -219,7 +220,7 @@ export async function scrapeSuppliersWithPlaywright(
         }
         try {
           await cardHandles[i].click();
-          await page.waitForTimeout(1000);
+          await page.waitForTimeout(900);
           const panePhone = await page.evaluate(() => {
             const phoneBtn = document.querySelector(
               'button[data-item-id^="phone:tel:"], a[href^="tel:"]'
@@ -337,7 +338,7 @@ export async function scrapeSuppliersWithPlaywright(
         item.href ||
         `https://www.google.com/maps/search/${encodeURIComponent(item.name)}`,
       sourceEngine: "PLAYWRIGHT_GOOGLE_MAPS",
-      openWaContacted: true,
+      openWaContacted: false,
     });
 
     if (scrapedCandidates.length >= maxResults) {
@@ -426,6 +427,11 @@ export async function scrapeSuppliersWithPlaywright(
   } | null = null;
 
   const topForRfq = scrapedCandidates.slice(0, 10);
+  const queuedDispatches: Array<{
+    supplierId?: string;
+    toPhone: string;
+    content: string;
+  }> = [];
 
   if (input.createRfqDraft !== false && topForRfq.length > 0) {
     createdRfqSession = runAtomicTransaction((txDb) => {
@@ -530,7 +536,8 @@ export async function scrapeSuppliersWithPlaywright(
           rfqId
         );
 
-        void dispatchOpenWaText({
+        queuedDispatches.push({
+          supplierId: c.id,
           toPhone: c.phoneWhatsapp,
           content: msg,
         });
@@ -543,7 +550,7 @@ export async function scrapeSuppliersWithPlaywright(
         .get(storeId) as { phone_whatsapp: string } | undefined;
 
       if (ownerUser) {
-        const ownerReport = `Laporan OpenWA: Hasil scraping "${rawKeyword}" menemukan ${topForRfq.length} supplier. Agen OpenWA telah otomatis menghubungi ke-${topForRfq.length} nomor WhatsApp supplier tersebut (${rfqCode}) untuk menanyakan Harga/Dus, MOQ, Expired Batch, dan Pengiriman Freezer.`;
+        const ownerReport = `Laporan OpenWA: Hasil scraping Playwright "${rawKeyword}" menemukan ${topForRfq.length} supplier. BotWA sedang menanyakan Harga/Dus, MOQ, Expired Batch, dan Pengiriman Freezer ke ke-${topForRfq.length} nomor WhatsApp supplier tersebut (${rfqCode}).`;
         insertWaLog.run(
           `wa-${crypto.randomUUID().slice(0, 8)}`,
           storeId,
@@ -551,7 +558,7 @@ export async function scrapeSuppliersWithPlaywright(
           ownerReport,
           rfqId
         );
-        void dispatchOpenWaText({
+        queuedDispatches.push({
           toPhone: ownerUser.phone_whatsapp,
           content: ownerReport,
         });
@@ -564,6 +571,37 @@ export async function scrapeSuppliersWithPlaywright(
         dispatchedCount: topForRfq.length,
       };
     });
+  }
+
+  // Send outbound WhatsApp inquiries via BotWA OpenWA Gateway sequentially after DB commit
+  let openWaDeliveredCount = 0;
+  let openWaFailedCount = 0;
+  const openWaDeliveryErrors: string[] = [];
+
+  for (let i = 0; i < queuedDispatches.length; i++) {
+    const task = queuedDispatches[i];
+    const dispatchRes = await dispatchOpenWaText({
+      toPhone: task.toPhone,
+      content: task.content,
+    });
+
+    if (task.supplierId) {
+      const candidate = scrapedCandidates.find((c) => c.id === task.supplierId);
+      if (candidate) {
+        candidate.openWaContacted = dispatchRes.deliveredToOpenWa;
+        candidate.openWaStatusNote = dispatchRes.statusNote;
+      }
+      if (dispatchRes.deliveredToOpenWa) {
+        openWaDeliveredCount++;
+      } else {
+        openWaFailedCount++;
+        openWaDeliveryErrors.push(`${task.toPhone}: ${dispatchRes.statusNote}`);
+      }
+    }
+
+    if (i < queuedDispatches.length - 1) {
+      await new Promise((r) => setTimeout(r, 250));
+    }
   }
 
   // Save latest scrape batch so UI survives page refresh
@@ -587,7 +625,9 @@ export async function scrapeSuppliersWithPlaywright(
     rawKeyword,
     locationHint: input.locationHint?.trim() || null,
     scrapedCount: scrapedCandidates.length,
-    openWaAutoContactedCount: createdRfqSession?.dispatchedCount ?? 0,
+    openWaAutoContactedCount: openWaDeliveredCount,
+    openWaFailedCount,
+    openWaDeliveryErrors,
     scrapedSuppliers: scrapedCandidates,
     createdRfqSession,
   };

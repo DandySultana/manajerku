@@ -13,6 +13,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { type AuthSessionData } from "./AuthAccountView";
 import { AuthSessionCheckingScreen } from "./AuthLedgerShell";
+import { useConfirmDialog } from "./ConfirmActionModal";
 import { useGooeyToastFlash } from "./GooeyToastProvider";
 
 export type ActiveTabKey =
@@ -241,6 +242,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname() || "/";
   const activeTab = getTabFromPathname(pathname);
+  const confirmDialog = useConfirmDialog();
 
   const [authSession, setAuthSession] = useState<AuthSessionData | null>(null);
   const [authChecking, setAuthChecking] = useState(true);
@@ -326,6 +328,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, [activeTab]);
 
   useEffect(() => {
+    Object.values(TAB_ROUTE_MAP).forEach((routeHref) => {
+      router.prefetch(routeHref);
+    });
+  }, [router]);
+
+  useEffect(() => {
     let cancelled = false;
     fetch("/api/v1/auth/me")
       .then((res) => res.json())
@@ -380,6 +388,19 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, [router]);
 
   const handleLogout = async () => {
+    const ok = await confirmDialog({
+      title: "Konfirmasi Logout Sesi",
+      description:
+        "Apakah Anda yakin ingin keluar dari sesi akun Manajerku saat ini?",
+      detailText: authSession
+        ? `${authSession.fullName} (${authSession.role})`
+        : undefined,
+      confirmLabel: "Ya, Logout",
+      cancelLabel: "Batal",
+      variant: "danger",
+    });
+    if (!ok) return;
+    setAccountMenuOpen(false);
     await fetch("/api/v1/auth/logout", { method: "POST" });
     clearSessionToLogin();
   };
@@ -405,6 +426,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const handleHeaderTempSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!authSession) return;
+    const ok = await confirmDialog({
+      title: "Simpan Perubahan Suhu Freezer?",
+      description:
+        "Catatan suhu rantai dingin toko akan diperbarui di database dan memengaruhi status pemantauan stok beku.",
+      detailText: `Suhu baru: ${tempInput}°C (${authSession.store.coldChainCode})`,
+      confirmLabel: "Ya, Simpan Suhu",
+      cancelLabel: "Batal",
+      variant: "primary",
+    });
+    if (!ok) return;
     setTempSaving(true);
     setTempFeedback(null);
     try {

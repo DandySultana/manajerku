@@ -1,5 +1,5 @@
 /**
- * Manajerku — Relational ACID Database Schema (7 Core Atomic Tables + Supporting Entities)
+ * Manajerku - Relational ACID Database Schema (7 Core Atomic Tables + Supporting Entities)
  * Grounded in Proposal Tim Orienix (UIN Ar-Raniry Banda Aceh) & Master PRD v1.0.0
  *
  * Compatible with Node.js built-in SQLite (DatabaseSync with STRICT foreign keys & ACID transactions)

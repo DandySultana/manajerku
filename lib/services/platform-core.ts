@@ -1154,6 +1154,14 @@ export function getCommandCenterSummary(params?: {
 
 export type SyncFilterType = "ALL" | "PO" | "POS";
 
+export interface UnifiedPosReceiptLineItem {
+  id: string;
+  productName: string;
+  soldUnitType: "PACK" | "BOX";
+  soldQty: number;
+  subtotalAmount: number;
+}
+
 export interface UnifiedTransactionItem {
   id: string;
   recordType: "PO" | "POS";
@@ -1168,6 +1176,12 @@ export interface UnifiedTransactionItem {
   statusVariant: "SUCCESS" | "INFO" | "WARNING";
   actionLabel: "Lihat PO" | "Cetak Struk";
   createdAt: string;
+  cashierLabel?: string;
+  paymentMethod?: string;
+  cashReceivedRp?: number;
+  changeAmountRp?: number;
+  storePhone?: string;
+  receiptItems?: UnifiedPosReceiptLineItem[];
 }
 
 function formatTimeWibFromIso(isoStr: string): string {
@@ -1259,11 +1273,18 @@ export function getUnifiedTransactions(params?: {
   }
 
   if (filterType === "ALL" || filterType === "POS") {
+    const storeUser = db
+      .prepare(
+        `SELECT phone_whatsapp FROM users WHERE store_id = ? AND is_active = 1 ORDER BY CASE role WHEN 'OWNER' THEN 1 ELSE 2 END LIMIT 1`,
+      )
+      .get(storeId) as { phone_whatsapp: string } | undefined;
+    const defaultStorePhone = storeUser?.phone_whatsapp || "082298606699";
+
     const sales = db
       .prepare(
         `SELECT id, invoice_number, cashier_label, customer_name_snapshot,
                 customer_type_label, service_type, payment_method, payment_status,
-                items_summary_text, total_amount, created_at
+                items_summary_text, total_amount, cash_received, change_amount, created_at
          FROM pos_transactions
          WHERE store_id = ?
          ORDER BY created_at DESC`,
@@ -1279,8 +1300,16 @@ export function getUnifiedTransactions(params?: {
       payment_status: string;
       items_summary_text: string;
       total_amount: number;
+      cash_received: number;
+      change_amount: number;
       created_at: string;
     }>;
+
+    const itemStmt = db.prepare(
+      `SELECT id, product_name_snapshot, sold_unit_type, sold_qty, subtotal_amount
+       FROM pos_transaction_items
+       WHERE pos_transaction_id = ?`,
+    );
 
     for (const row of sales) {
       const statusBadge =
@@ -1289,6 +1318,51 @@ export function getUnifiedTransactions(params?: {
         row.service_type === "TAKEAWAY_PICKUP"
           ? "Takeaway Pickup"
           : "Pengiriman";
+
+      const dbItems = itemStmt.all(row.id) as Array<{
+        id: string;
+        product_name_snapshot: string;
+        sold_unit_type: "PACK" | "BOX";
+        sold_qty: number;
+        subtotal_amount: number;
+      }>;
+
+      let receiptItems: UnifiedPosReceiptLineItem[] = dbItems.map((it) => ({
+        id: it.id,
+        productName: it.product_name_snapshot,
+        soldUnitType: it.sold_unit_type,
+        soldQty: it.sold_qty,
+        subtotalAmount: it.subtotal_amount,
+      }));
+
+      if (receiptItems.length === 0 && row.items_summary_text) {
+        const parts = row.items_summary_text
+          .split("+")
+          .map((s) => s.trim())
+          .filter(Boolean);
+        const perPartSubtotal = Math.round(
+          row.total_amount / Math.max(1, parts.length),
+        );
+        receiptItems = parts.map((part, idx) => {
+          const m = part.match(/^(\d+)\s*(Dus|Pack|Bungkus|Kardus)?\s*(.+)$/i);
+          const qty = m ? Math.max(1, Number(m[1])) : 1;
+          const unitRaw = (m?.[2] || "Pack").toLowerCase();
+          const soldUnitType: "PACK" | "BOX" =
+            unitRaw === "dus" || unitRaw === "kardus" ? "BOX" : "PACK";
+          const prodName = m?.[3]?.trim() || part;
+          const isLast = idx === parts.length - 1;
+          const sub = isLast
+            ? row.total_amount - perPartSubtotal * (parts.length - 1)
+            : perPartSubtotal;
+          return {
+            id: `${row.id}-item-${idx + 1}`,
+            productName: prodName,
+            soldUnitType,
+            soldQty: qty,
+            subtotalAmount: Math.max(0, sub),
+          };
+        });
+      }
 
       unified.push({
         id: row.id,
@@ -1304,6 +1378,12 @@ export function getUnifiedTransactions(params?: {
         statusVariant: "SUCCESS",
         actionLabel: "Cetak Struk",
         createdAt: row.created_at,
+        cashierLabel: row.cashier_label || "Kasir 01",
+        paymentMethod: row.payment_method,
+        cashReceivedRp: row.cash_received || row.total_amount,
+        changeAmountRp: row.change_amount || 0,
+        storePhone: defaultStorePhone,
+        receiptItems,
       });
     }
   }

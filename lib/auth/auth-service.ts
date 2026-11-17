@@ -477,7 +477,7 @@ export function assertStoreOwnership(
 }
 
 /**
- * Section 2.3: Account Management — Edit Profile
+ * Section 2.3: Account Management - Edit Profile
  */
 export function updateUserProfile(params: {
   userId: string;
@@ -559,7 +559,7 @@ export function updateUserProfile(params: {
 }
 
 /**
- * Section 2.3: Account Management — Change Password
+ * Section 2.3: Account Management - Change Password
  */
 export function changeUserPassword(params: {
   userId: string;

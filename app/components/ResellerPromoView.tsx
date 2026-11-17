@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import { formatRp } from "./CommandCenterDashboard";
+import { useConfirmDialog } from "./ConfirmActionModal";
 import { useGooeyToastFlash } from "./GooeyToastProvider";
 
 interface PromoCampaignItem {
@@ -57,6 +58,7 @@ export default function ResellerPromoView({
   const [submittingReseller, setSubmittingReseller] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const confirmDialog = useConfirmDialog();
 
   useGooeyToastFlash(
     feedbackMsg,
@@ -139,6 +141,19 @@ export default function ResellerPromoView({
   }, [showAddResellerModal]);
 
   const handleBroadcastOneClick = async (campaignId: string) => {
+    const camp = campaigns.find((c) => c.id === campaignId);
+    const ok = await confirmDialog({
+      title: "Konfirmasi Broadcast Promo & Aktifkan Diskon POS",
+      description:
+        "Pesan promo akan dikirimkan ke seluruh reseller aktif dan harga diskon FEFO akan langsung diterapkan di kasir POS.",
+      detailText: camp
+        ? `${camp.productName} (-${camp.discountPct}%) • ${resellers.length} Reseller WA`
+        : undefined,
+      confirmLabel: "Ya, Kirim Broadcast",
+      cancelLabel: "Batal",
+      variant: "primary",
+    });
+    if (!ok) return;
     setBroadcastingId(campaignId);
     setFeedbackMsg(null);
     setErrorMsg(null);
@@ -174,6 +189,16 @@ export default function ResellerPromoView({
 
   const handleAddReseller = async (e: React.FormEvent) => {
     e.preventDefault();
+    const ok = await confirmDialog({
+      title: "Simpan Mitra Reseller Baru?",
+      description:
+        "Data mitra reseller akan ditambahkan ke direktori penerima broadcast promo FEFO dan pelanggan grosir.",
+      detailText: `${bizName} (${phoneWa}) • Segmen: ${segment}`,
+      confirmLabel: "Ya, Simpan Reseller",
+      cancelLabel: "Batal",
+      variant: "primary",
+    });
+    if (!ok) return;
     setErrorMsg(null);
     setSubmittingReseller(true);
     try {
@@ -211,6 +236,17 @@ export default function ResellerPromoView({
   };
 
   const handleToggleResellerSub = async (reseller: ResellerItem) => {
+    const ok = await confirmDialog({
+      title: "Ubah Status Langganan Broadcast Reseller?",
+      description: reseller.isPromoSubscribed
+        ? "Mitra reseller ini akan dinonaktifkan sementara (opt-out) dari daftar penerima siaran promo WhatsApp."
+        : "Mitra reseller ini akan diaktifkan kembali untuk menerima siaran promo FEFO via WhatsApp.",
+      detailText: `${reseller.businessName} (${reseller.phoneWhatsapp})`,
+      confirmLabel: "Ya, Ubah Status",
+      cancelLabel: "Batal",
+      variant: "warning",
+    });
+    if (!ok) return;
     setErrorMsg(null);
     try {
       const res = await fetch(`/api/v1/resellers/${reseller.id}`, {
@@ -246,6 +282,16 @@ export default function ResellerPromoView({
   };
 
   const handleDeleteReseller = async (reseller: ResellerItem) => {
+    const ok = await confirmDialog({
+      title: "Hapus Mitra Reseller dari Direktori?",
+      description:
+        "Data mitra reseller ini akan dihapus secara permanen dari daftar penerima broadcast promo dan pelanggan grosir.",
+      detailText: `${reseller.businessName} (${reseller.phoneWhatsapp})`,
+      confirmLabel: "Ya, Hapus Reseller",
+      cancelLabel: "Batal",
+      variant: "danger",
+    });
+    if (!ok) return;
     setErrorMsg(null);
     try {
       const res = await fetch(
@@ -332,12 +378,48 @@ export default function ResellerPromoView({
         </div>
 
         {loading ? (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 animate-pulse">
+          <div
+            className="grid grid-cols-1 lg:grid-cols-2 gap-4 animate-pulse"
+            role="status"
+            aria-busy="true"
+            aria-label="Memuat kampanye promo FEFO..."
+          >
             {[1, 2].map((n) => (
               <div
                 key={n}
-                className="h-56 rounded-2xl bg-white border border-[#E5E9EC]"
-              />
+                className="rounded-2xl bg-white border border-[#E5E9EC] p-5 space-y-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-2 flex-1">
+                    <div className="flex items-center gap-2">
+                      <div className="h-5 w-24 rounded-md bg-[#E2E8F0]" />
+                      <div className="h-5 w-28 rounded-md bg-[#F1F5F9]" />
+                    </div>
+                    <div className="h-5 w-3/4 rounded bg-[#CBD5E1]" />
+                    <div className="h-3.5 w-1/2 rounded bg-[#F1F5F9]" />
+                  </div>
+                  <div className="h-12 w-28 rounded-xl bg-[#F8FAFC] border border-[#E5E9EC]" />
+                </div>
+                <div className="grid grid-cols-3 gap-3 py-3 px-3.5 rounded-xl bg-[#F8FAFC] border border-[#E5E9EC]">
+                  <div className="space-y-1.5">
+                    <div className="h-3 w-16 rounded bg-[#E2E8F0]" />
+                    <div className="h-4 w-20 rounded bg-[#CBD5E1]" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="h-3 w-20 rounded bg-[#E2E8F0]" />
+                    <div className="h-4 w-24 rounded bg-[#CBD5E1]" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="h-3 w-24 rounded bg-[#E2E8F0]" />
+                    <div className="h-4 w-24 rounded bg-[#CBD5E1]" />
+                  </div>
+                </div>
+                <div className="h-16 rounded-xl bg-[#F8FAFC] border border-[#E5E9EC]" />
+                <div className="flex items-center justify-between gap-2 pt-1">
+                  <div className="h-10 w-36 rounded-xl bg-[#F1F5F9]" />
+                  <div className="h-10 w-52 rounded-xl bg-[#D7F0E6]/80" />
+                </div>
+              </div>
             ))}
           </div>
         ) : campaigns.length === 0 ? (
@@ -501,8 +583,34 @@ export default function ResellerPromoView({
         </div>
 
         {loading ? (
-          <div className="p-6 text-center text-xs text-[#475569]">
-            Memuat direktori mitra reseller...
+          <div
+            className="divide-y divide-[#F1F5F9] animate-pulse"
+            role="status"
+            aria-busy="true"
+            aria-label="Memuat direktori mitra reseller..."
+          >
+            {[1, 2, 3, 4].map((row) => (
+              <div
+                key={row}
+                className="p-4 sm:px-5 flex flex-col lg:flex-row lg:items-center justify-between gap-3"
+              >
+                <div className="space-y-2 flex-1">
+                  <div className="flex items-center gap-2">
+                    <div className="h-4 w-44 rounded bg-[#CBD5E1]" />
+                    <div className="h-5 w-24 rounded-md bg-[#E2E8F0]" />
+                    <div className="h-5 w-24 rounded-md bg-[#F1F5F9]" />
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <div className="h-3 w-32 rounded bg-[#E2E8F0]" />
+                    <div className="h-3 w-28 rounded bg-[#F1F5F9]" />
+                    <div className="h-3 w-40 rounded bg-[#F1F5F9] hidden sm:block" />
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="h-9 w-36 rounded-xl bg-[#F1F5F9]" />
+                </div>
+              </div>
+            ))}
           </div>
         ) : filteredResellers.length === 0 ? (
           <div className="p-8 text-center space-y-2">

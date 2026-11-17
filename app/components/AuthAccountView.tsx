@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { useConfirmDialog } from "./ConfirmActionModal";
 import { useGooeyToastFlash } from "./GooeyToastProvider";
 
 export interface AuthSessionData {
@@ -34,6 +35,7 @@ export default function AuthAccountView({
   const [loading, setLoading] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const confirmDialog = useConfirmDialog();
 
   useGooeyToastFlash(
     feedbackMsg,
@@ -51,6 +53,16 @@ export default function AuthAccountView({
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
+    const ok = await confirmDialog({
+      title: "Simpan Perubahan Profil Akun?",
+      description:
+        "Data nama lengkap, email, dan nomor WhatsApp akun Anda akan diperbarui di sistem.",
+      detailText: `${profName} • ${profPhone}`,
+      confirmLabel: "Ya, Simpan Perubahan",
+      cancelLabel: "Batal",
+      variant: "primary",
+    });
+    if (!ok) return;
     setLoading(true);
     setErrorMsg(null);
     setFeedbackMsg(null);
@@ -83,6 +95,16 @@ export default function AuthAccountView({
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
+    const ok = await confirmDialog({
+      title: "Konfirmasi Perubahan Password",
+      description:
+        "Password akun Anda akan diperbarui dan seluruh sesi aktif pada perangkat lain akan dicabut demi keamanan.",
+      detailText: `Akun: ${currentSession.fullName}`,
+      confirmLabel: "Ya, Ubah Password",
+      cancelLabel: "Batal",
+      variant: "warning",
+    });
+    if (!ok) return;
     setLoading(true);
     setErrorMsg(null);
     setFeedbackMsg(null);
@@ -113,6 +135,16 @@ export default function AuthAccountView({
   };
 
   const handleLogout = async () => {
+    const ok = await confirmDialog({
+      title: "Konfirmasi Logout Sesi",
+      description:
+        "Apakah Anda yakin ingin keluar dari sesi akun Manajerku saat ini?",
+      detailText: `${currentSession.fullName} (${currentSession.phoneWhatsapp})`,
+      confirmLabel: "Ya, Logout",
+      cancelLabel: "Batal",
+      variant: "danger",
+    });
+    if (!ok) return;
     setLoading(true);
     try {
       await fetch("/api/v1/auth/logout", { method: "POST" });

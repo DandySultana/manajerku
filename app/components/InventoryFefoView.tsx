@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import { formatRp } from "./CommandCenterDashboard";
+import { useConfirmDialog } from "./ConfirmActionModal";
 import { useGooeyToastFlash } from "./GooeyToastProvider";
 
 interface ProductInventoryItem {
@@ -119,6 +120,7 @@ export default function InventoryFefoView({
   const [loading, setLoading] = useState(true);
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const confirmDialog = useConfirmDialog();
 
   useGooeyToastFlash(
     feedbackMsg,
@@ -293,9 +295,19 @@ export default function InventoryFefoView({
   };
 
   const handleUpdateRop = async (prod: ProductInventoryItem) => {
+    const newRop = Number(ropDrafts[prod.id] ?? prod.reorderPointPacks);
+    const ok = await confirmDialog({
+      title: "Simpan Perubahan Batas Stok Minimum (ROP)?",
+      description:
+        "Batas pemicu Auto-RFQ untuk produk ini akan diperbarui di database inventaris.",
+      detailText: `${prod.name}: ${prod.reorderPointPacks} ${prod.retailUnitName} -> ${newRop} ${prod.retailUnitName}`,
+      confirmLabel: "Ya, Perbarui ROP",
+      cancelLabel: "Batal",
+      variant: "primary",
+    });
+    if (!ok) return;
     setFeedbackMsg(null);
     setErrorMsg(null);
-    const newRop = Number(ropDrafts[prod.id] ?? prod.reorderPointPacks);
     const res = await fetch(`/api/v1/inventory/products/${prod.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -318,6 +330,16 @@ export default function InventoryFefoView({
 
   const handleCreateSku = async (e: React.FormEvent) => {
     e.preventDefault();
+    const ok = await confirmDialog({
+      title: "Tambahkan Master SKU Baru?",
+      description:
+        "Produk baru akan disimpan ke dalam katalog Master SKU dan antrean FEFO toko.",
+      detailText: `${skuName} (${skuCode}) • 1 Dus = ${packsPerBox} Pack`,
+      confirmLabel: "Ya, Simpan SKU",
+      cancelLabel: "Batal",
+      variant: "primary",
+    });
+    if (!ok) return;
     setFeedbackMsg(null);
     setErrorMsg(null);
     const res = await fetch("/api/v1/inventory/products", {
@@ -351,6 +373,16 @@ export default function InventoryFefoView({
 
   const handleCreateBatch = async (e: React.FormEvent) => {
     e.preventDefault();
+    const ok = await confirmDialog({
+      title: "Simpan Batch Stok Masuk ke Antrean FEFO?",
+      description:
+        "Batch baru akan diurutkan otomatis berdasarkan tanggal kedaluwarsa (First-Expired, First-Out).",
+      detailText: `Batch ${batchNumber} • ${batchBoxes} Dus • Exp: ${batchExpiry}`,
+      confirmLabel: "Ya, Masukkan Batch",
+      cancelLabel: "Batal",
+      variant: "primary",
+    });
+    if (!ok) return;
     setFeedbackMsg(null);
     setErrorMsg(null);
     const res = await fetch("/api/v1/inventory/batches", {
@@ -379,6 +411,16 @@ export default function InventoryFefoView({
   };
 
   const handleWriteOff = async (batch: BatchItem) => {
+    const ok = await confirmDialog({
+      title: "Konfirmasi Write-Off (Pemusnahan Batch)",
+      description:
+        "Sisa stok pada batch ini akan dikosongkan dan dicatat sebagai beban kerugian di Buku Kas secara permanen.",
+      detailText: `${batch.productName} • Batch ${batch.batchNumber} (${batch.currentQtyPacks} Pack)`,
+      confirmLabel: "Ya, Musnahkan Batch",
+      cancelLabel: "Batal",
+      variant: "danger",
+    });
+    if (!ok) return;
     setFeedbackMsg(null);
     setErrorMsg(null);
     const res = await fetch("/api/v1/inventory/batches/write-off", {
@@ -408,6 +450,16 @@ export default function InventoryFefoView({
   };
 
   const handleDeactivateSku = async (prod: ProductInventoryItem) => {
+    const ok = await confirmDialog({
+      title: "Hapus / Nonaktifkan Master SKU?",
+      description:
+        "Produk ini akan dinonaktifkan dari katalog aktif toko. Pastikan Anda telah memeriksa sisa batch terkait.",
+      detailText: `${prod.name} (${prod.skuCode})`,
+      confirmLabel: "Ya, Hapus SKU",
+      cancelLabel: "Batal",
+      variant: "danger",
+    });
+    if (!ok) return;
     setFeedbackMsg(null);
     setErrorMsg(null);
     const res = await fetch(
@@ -507,6 +559,16 @@ export default function InventoryFefoView({
       onNavigateTab("promo");
       return;
     }
+    const ok = await confirmDialog({
+      title: "Konfirmasi Siaran Draf Promo FEFO",
+      description:
+        "Pesan promo akan dikirimkan ke mitra reseller dan harga diskon FEFO akan langsung diaktifkan di kasir POS.",
+      detailText: `${primaryDraftCampaign.productName} (-${primaryDraftCampaign.discountPct}%)`,
+      confirmLabel: "Ya, Siarkan Promo",
+      cancelLabel: "Batal",
+      variant: "primary",
+    });
+    if (!ok) return;
     setBroadcasting(true);
     setFeedbackMsg(null);
     setErrorMsg(null);
@@ -617,126 +679,151 @@ export default function InventoryFefoView({
       </div>
 
       {/* 4 KPI Cards Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        {/* KPI 1: Nilai Aset Stok Freezer */}
-        <div className="rounded-2xl bg-gradient-to-br from-[#0F6352] to-[#0B5344] text-white p-5 shadow-sm flex flex-col justify-between min-h-[138px]">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-semibold tracking-wider uppercase text-emerald-100/90">
-              Nilai Aset Stok Freezer
-            </span>
-            <svg
-              aria-hidden="true"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="w-4 h-4 text-emerald-100/85 shrink-0"
-            >
-              <path d="M19 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0 0 4h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5" />
-              <path d="M16 12h4v4h-4a2 2 0 0 1 0-4Z" />
-            </svg>
-          </div>
-          <div className="my-2">
-            <div className="text-[24px] sm:text-[26px] font-bold tracking-tight tabular-nums leading-tight">
-              {activeRole === "CASHIER"
-                ? "Rp ••••••••"
-                : formatRp(totalAssetValueRp)}
-            </div>
-          </div>
-          <div className="text-[11px] text-emerald-100/85">
-            {activeBatches.length} Batch Aktif • FEFO Otomatis
-          </div>
-        </div>
-
-        {/* KPI 2: Stok Kritis (< Batas Min) */}
-        <button
-          type="button"
-          onClick={() => setTabFilter("CRITICAL")}
-          className="rounded-2xl bg-white border border-[#E5E9EC] hover:border-[#CBD5E1] p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] flex flex-col justify-between min-h-[138px] text-left w-full transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352]"
-        >
-          <div className="flex items-center justify-between gap-2 w-full">
-            <span className="text-xs font-medium text-[#64748B]">
-              Stok Kritis (&lt; Batas Min)
-            </span>
-            <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
-          </div>
-          <div className="my-2">
-            <div className="text-[26px] font-bold text-[#0F172A] tracking-tight tabular-nums leading-tight">
-              {criticalSkus.length} SKU
-            </div>
-          </div>
-          <div className="text-[11px] text-[#64748B]">
-            Butuh Auto-Scrape Supplier
-          </div>
-        </button>
-
-        {/* KPI 3: Mendekati Expired (< 30 Hr) */}
-        <button
-          type="button"
-          onClick={() => setTabFilter("EXPIRING")}
-          className="rounded-2xl bg-white border border-[#E5E9EC] hover:border-[#CBD5E1] p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] flex flex-col justify-between min-h-[138px] text-left w-full transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352]"
-        >
-          <div className="flex items-center justify-between gap-2 w-full">
-            <span className="text-xs font-medium text-[#64748B]">
-              Mendekati Expired (&lt; 30 Hr)
-            </span>
-            <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
-          </div>
-          <div className="my-2">
-            <div className="text-[24px] sm:text-[26px] font-bold text-[#0F172A] tracking-tight tabular-nums leading-tight">
-              {expiringBatches.length} Batch ({expiringPacksTotal} Pack)
-            </div>
-          </div>
-          <div className="text-[11px] text-[#64748B]">
-            {activeRole === "CASHIER"
-              ? "Prioritas Promo FEFO"
-              : `Potensi Modal ${formatRp(expiringCapitalRp)}`}
-          </div>
-        </button>
-
-        {/* KPI 4: Kapasitas Chest Freezer */}
+      {loading && allBatches.length === 0 && products.length === 0 ? (
         <div
-          title={`Terisi ${totalHealthyPacksAll} Pack dari estimasi kapasitas ${freezerCapacityPacks} Pack`}
-          className="rounded-2xl bg-white border border-[#E5E9EC] p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] flex flex-col justify-between min-h-[138px]"
+          className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 animate-pulse"
+          role="status"
+          aria-busy="true"
+          aria-label="Memuat metrik inventaris FEFO..."
         >
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-medium text-[#64748B]">
-              Kapasitas Chest Freezer
-            </span>
-            <svg
-              aria-hidden="true"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="w-4 h-4 text-[#64748B] shrink-0"
+          {[1, 2, 3, 4].map((n) => (
+            <div
+              key={n}
+              className="rounded-2xl bg-white border border-[#E5E9EC] p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] flex flex-col justify-between min-h-[138px]"
             >
-              <rect x="5" y="2" width="14" height="20" rx="2" />
-              <path d="M5 10h14" />
-              <path d="M9 6v1" />
-              <path d="M9 14v2" />
-            </svg>
-          </div>
-          <div className="mt-2">
-            <div className="text-[26px] font-bold text-[#0F172A] tracking-tight tabular-nums leading-tight">
-              {freezerFillPct}% Terisi
+              <div className="flex items-center justify-between gap-2">
+                <div className="h-3.5 w-36 rounded bg-[#E2E8F0]" />
+                <div className="h-3.5 w-3.5 rounded-full bg-[#F1F5F9]" />
+              </div>
+              <div className="my-2">
+                <div className="h-7 w-40 rounded-lg bg-[#CBD5E1]" />
+              </div>
+              <div className="h-3 w-36 rounded bg-[#F1F5F9]" />
             </div>
-            <div className="w-full h-1.5 bg-[#E2E8F0] rounded-full overflow-hidden mt-2">
-              <div
-                style={{ width: `${freezerFillPct}%` }}
-                className="h-full bg-[#0F6352] rounded-full"
-              />
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+          {/* KPI 1: Nilai Aset Stok Freezer */}
+          <div className="rounded-2xl bg-gradient-to-br from-[#0F6352] to-[#0B5344] text-white p-5 shadow-sm flex flex-col justify-between min-h-[138px]">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold tracking-wider uppercase text-emerald-100/90">
+                Nilai Aset Stok Freezer
+              </span>
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="w-4 h-4 text-emerald-100/85 shrink-0"
+              >
+                <path d="M19 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0 0 4h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5" />
+                <path d="M16 12h4v4h-4a2 2 0 0 1 0-4Z" />
+              </svg>
+            </div>
+            <div className="my-2">
+              <div className="text-[24px] sm:text-[26px] font-bold tracking-tight tabular-nums leading-tight">
+                {activeRole === "CASHIER"
+                  ? "Rp ••••••••"
+                  : formatRp(totalAssetValueRp)}
+              </div>
+            </div>
+            <div className="text-[11px] text-emerald-100/85">
+              {activeBatches.length} Batch Aktif • FEFO Otomatis
             </div>
           </div>
-          <div className="text-[11px] text-[#64748B] mt-2">
-            {storeTempLabel || "Memuat status suhu freezer..."}
+
+          {/* KPI 2: Stok Kritis (< Batas Min) */}
+          <button
+            type="button"
+            onClick={() => setTabFilter("CRITICAL")}
+            className="rounded-2xl bg-white border border-[#E5E9EC] hover:border-[#CBD5E1] p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] flex flex-col justify-between min-h-[138px] text-left w-full transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352]"
+          >
+            <div className="flex items-center justify-between gap-2 w-full">
+              <span className="text-xs font-medium text-[#64748B]">
+                Stok Kritis (&lt; Batas Min)
+              </span>
+              <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
+            </div>
+            <div className="my-2">
+              <div className="text-[26px] font-bold text-[#0F172A] tracking-tight tabular-nums leading-tight">
+                {criticalSkus.length} SKU
+              </div>
+            </div>
+            <div className="text-[11px] text-[#64748B]">
+              Butuh Auto-Scrape Supplier
+            </div>
+          </button>
+
+          {/* KPI 3: Mendekati Expired (< 30 Hr) */}
+          <button
+            type="button"
+            onClick={() => setTabFilter("EXPIRING")}
+            className="rounded-2xl bg-white border border-[#E5E9EC] hover:border-[#CBD5E1] p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] flex flex-col justify-between min-h-[138px] text-left w-full transition-colors focus-visible:outline-2 focus-visible:outline-[#0F6352]"
+          >
+            <div className="flex items-center justify-between gap-2 w-full">
+              <span className="text-xs font-medium text-[#64748B]">
+                Mendekati Expired (&lt; 30 Hr)
+              </span>
+              <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+            </div>
+            <div className="my-2">
+              <div className="text-[24px] sm:text-[26px] font-bold text-[#0F172A] tracking-tight tabular-nums leading-tight">
+                {expiringBatches.length} Batch ({expiringPacksTotal} Pack)
+              </div>
+            </div>
+            <div className="text-[11px] text-[#64748B]">
+              {activeRole === "CASHIER"
+                ? "Prioritas Promo FEFO"
+                : `Potensi Modal ${formatRp(expiringCapitalRp)}`}
+            </div>
+          </button>
+
+          {/* KPI 4: Kapasitas Chest Freezer */}
+          <div
+            title={`Terisi ${totalHealthyPacksAll} Pack dari estimasi kapasitas ${freezerCapacityPacks} Pack`}
+            className="rounded-2xl bg-white border border-[#E5E9EC] p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] flex flex-col justify-between min-h-[138px]"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-medium text-[#64748B]">
+                Kapasitas Chest Freezer
+              </span>
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="w-4 h-4 text-[#64748B] shrink-0"
+              >
+                <rect x="5" y="2" width="14" height="20" rx="2" />
+                <path d="M5 10h14" />
+                <path d="M9 6v1" />
+                <path d="M9 14v2" />
+              </svg>
+            </div>
+            <div className="mt-2">
+              <div className="text-[26px] font-bold text-[#0F172A] tracking-tight tabular-nums leading-tight">
+                {freezerFillPct}% Terisi
+              </div>
+              <div className="w-full h-1.5 bg-[#E2E8F0] rounded-full overflow-hidden mt-2">
+                <div
+                  style={{ width: `${freezerFillPct}%` }}
+                  className="h-full bg-[#0F6352] rounded-full"
+                />
+              </div>
+            </div>
+            <div className="text-[11px] text-[#64748B] mt-2">
+              {storeTempLabel || "Memuat status suhu freezer..."}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Main FEFO Batch Queue Table Card */}
       <section
@@ -827,11 +914,40 @@ export default function InventoryFefoView({
             </thead>
             <tbody className="divide-y divide-[#F1F5F9] text-xs">
               {loading ? (
-                <tr>
-                  <td colSpan={5} className="py-8 text-center text-[#64748B]">
-                    Memuat data antrean batch FEFO...
-                  </td>
-                </tr>
+                [1, 2, 3, 4, 5].map((n) => (
+                  <tr key={n} className="animate-pulse">
+                    <td className="py-3.5 px-3 align-middle">
+                      <div className="flex items-center gap-3">
+                        <span className="w-9 h-9 rounded-xl bg-[#F1F5F9] shrink-0" />
+                        <div className="space-y-1.5">
+                          <div className="h-3.5 w-36 rounded bg-[#CBD5E1]" />
+                          <div className="h-2.5 w-28 rounded bg-[#E2E8F0]" />
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-3.5 px-3 align-middle">
+                      <div className="space-y-1.5">
+                        <div className="h-5 w-24 rounded-md bg-[#E2E8F0]" />
+                        <div className="h-2.5 w-32 rounded bg-[#F1F5F9]" />
+                      </div>
+                    </td>
+                    <td className="py-3.5 px-3 align-middle">
+                      <div className="space-y-1.5">
+                        <div className="h-3.5 w-28 rounded bg-[#CBD5E1]" />
+                        <div className="h-2.5 w-20 rounded bg-[#E2E8F0]" />
+                      </div>
+                    </td>
+                    <td className="py-3.5 px-3 align-middle">
+                      <div className="space-y-1.5">
+                        <div className="h-3.5 w-32 rounded bg-[#E2E8F0]" />
+                        <div className="h-2.5 w-24 rounded bg-[#F1F5F9]" />
+                      </div>
+                    </td>
+                    <td className="py-3.5 px-3 align-middle text-right">
+                      <div className="inline-block h-8 w-28 rounded-xl bg-[#F1F5F9]" />
+                    </td>
+                  </tr>
+                ))
               ) : visibleBatches.length === 0 ? (
                 <tr>
                   <td

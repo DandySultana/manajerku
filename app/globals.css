@@ -13,6 +13,7 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-sans-app);
   --font-mono: var(--font-mono-app);
+  --font-serif: var(--font-serif-app), Georgia, Cambria, "Times New Roman", serif;
 }
 
 @layer base {
@@ -45,6 +46,46 @@
   max-width: calc(100vw - 32px) !important;
   left: auto !important;
   right: 0 !important;
+}
+
+@keyframes modalBackdropFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modalPanelFadeZoom {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+[role="dialog"].fixed.inset-0,
+.fixed.inset-0.z-50 {
+  animation: modalBackdropFadeIn 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+[role="dialog"].fixed.inset-0 > :not(style),
+.fixed.inset-0.z-50 > :not(style) {
+  animation: modalPanelFadeZoom 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: transform, opacity;
+}
+
+@media print {
+  [role="dialog"].fixed.inset-0,
+  [role="dialog"].fixed.inset-0 > :not(style),
+  .fixed.inset-0.z-50,
+  .fixed.inset-0.z-50 > :not(style) {
+    animation: none !important;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

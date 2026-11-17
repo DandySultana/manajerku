@@ -457,6 +457,7 @@ export async function processSupplierRfqReply(params: {
   rfqSessionId?: string;
   supplierPhone: string;
   messageText: string;
+  skipOpenWaDispatch?: boolean;
 }) {
   const storeId = params.storeId || DEFAULT_STORE_ID;
   const normalizedPhone = normalizePhoneE164(params.supplierPhone);
@@ -579,6 +580,7 @@ export async function processSupplierRfqReply(params: {
 
     let agentReplyToSupplier: string;
     let ownerRecommendationMessage: string | null = null;
+    let ownerPhone: string | null = null;
     let rfqNextStatus = targetRfq.status;
 
     if (updatedQuote.status !== "COMPLETE") {
@@ -632,10 +634,12 @@ export async function processSupplierRfqReply(params: {
         agentReplyToSupplier,
         targetRfq.id
       );
-    void dispatchOpenWaText({
-      toPhone: normalizedPhone,
-      content: agentReplyToSupplier,
-    });
+    if (!params.skipOpenWaDispatch) {
+      void dispatchOpenWaText({
+        toPhone: normalizedPhone,
+        content: agentReplyToSupplier,
+      });
+    }
 
     // FR-504: Evaluate comparison & Cash Plafon if at least 1 quote is COMPLETE
     const completedQuotes = quotes
@@ -705,6 +709,7 @@ export async function processSupplierRfqReply(params: {
         .get(storeId) as { phone_whatsapp: string } | undefined;
 
       if (ownerUser) {
+        ownerPhone = ownerUser.phone_whatsapp;
         txDb
           .prepare(`
           INSERT INTO whatsapp_messages_log (
@@ -719,10 +724,12 @@ export async function processSupplierRfqReply(params: {
             ownerRecommendationMessage,
             targetRfq.id
           );
-        void dispatchOpenWaText({
-          toPhone: ownerUser.phone_whatsapp,
-          content: ownerRecommendationMessage,
-        });
+        if (!params.skipOpenWaDispatch) {
+          void dispatchOpenWaText({
+            toPhone: ownerUser.phone_whatsapp,
+            content: ownerRecommendationMessage,
+          });
+        }
       }
     } else {
       txDb
@@ -740,6 +747,7 @@ export async function processSupplierRfqReply(params: {
       updatedSlotState: updatedQuote,
       agentReplyToSupplier,
       ownerRecommendationMessage,
+      ownerPhone,
     };
   });
 }
@@ -1184,7 +1192,7 @@ export function getWhatsappProcurementState(storeId = DEFAULT_STORE_ID) {
     ownerName: ownerInfo?.full_name || "Pemilik Toko",
     ownerWhatsappPhone: ownerInfo?.phone_whatsapp || "+6282298606699",
     openWaGateway: {
-      agentPhone: "+628116800999",
+      agentPhone: process.env.OPENWA_AGENT_PHONE || "+62895351009379",
       apiUrl: process.env.OPENWA_API_URL || "http://localhost:8085",
       webhookEndpoint: "/api/v1/webhooks/whatsapp",
       sessionActive: true,
@@ -1253,6 +1261,7 @@ export function processOwnerWhatsappAssistantCommand(params: {
   messageText: string;
   rfqSessionId?: string;
   mediaUrl?: string;
+  skipOpenWaDispatch?: boolean;
 }) {
   const storeId = params.storeId || DEFAULT_STORE_ID;
   const text = params.messageText.trim();
@@ -1556,10 +1565,12 @@ export function processOwnerWhatsappAssistantCommand(params: {
             noPromoMsg
           );
       });
-      void dispatchOpenWaText({
-        toPhone: params.senderPhone,
-        content: noPromoMsg,
-      });
+      if (!params.skipOpenWaDispatch) {
+        void dispatchOpenWaText({
+          toPhone: params.senderPhone,
+          content: noPromoMsg,
+        });
+      }
       return {
         routedRole: "ASSISTANT_INTERNAL" as const,
         data: { replyMessage: noPromoMsg },
@@ -1601,10 +1612,12 @@ export function processOwnerWhatsappAssistantCommand(params: {
           blastReply
         );
     });
-    void dispatchOpenWaText({
-      toPhone: params.senderPhone,
-      content: blastReply,
-    });
+    if (!params.skipOpenWaDispatch) {
+      void dispatchOpenWaText({
+        toPhone: params.senderPhone,
+        content: blastReply,
+      });
+    }
 
     return {
       routedRole: "ASSISTANT_INTERNAL" as const,

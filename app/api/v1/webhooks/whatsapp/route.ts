@@ -75,6 +75,7 @@ export async function POST(req: NextRequest) {
     const rfqSessionId = body.rfqSessionId
       ? String(body.rfqSessionId)
       : undefined;
+    const skipOpenWaDispatch = body.skipOpenWaDispatch === true;
 
     const identity = identifyWhatsappSender(rawFromPhone, requestedStoreId);
     const effectiveStoreId = requestedStoreId || identity.storeId;
@@ -86,6 +87,7 @@ export async function POST(req: NextRequest) {
         rfqSessionId,
         supplierPhone: identity.normalizedPhone,
         messageText: rawMessageText,
+        skipOpenWaDispatch,
       });
 
       return NextResponse.json({
@@ -110,6 +112,7 @@ export async function POST(req: NextRequest) {
         messageText: rawMessageText,
         rfqSessionId,
         mediaUrl: mediaUrl ? String(mediaUrl) : undefined,
+        skipOpenWaDispatch,
       });
 
       return NextResponse.json({

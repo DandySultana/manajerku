@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "test": "node --no-warnings --test tests/*.test.ts",
-    "openwa": "node scripts/start-openwa.mjs"
+    "openwa": "node scripts/start-openwa.mjs",
+    "openwa:code": "node scripts/start-openwa.mjs --headful",
+    "botwa": "npm --prefix ../botwa start"
   },
   "dependencies": {
     "goey-toast": "^0.6.0",

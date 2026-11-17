@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { formatRp } from "./CommandCenterDashboard";
+import { useConfirmDialog } from "./ConfirmActionModal";
 import { useGooeyToastFlash } from "./GooeyToastProvider";
 
 interface FinanceChartDay {
@@ -229,6 +230,7 @@ export default function FinanceKurView({
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
+  const confirmDialog = useConfirmDialog();
 
   useGooeyToastFlash(
     feedbackMsg,
@@ -331,6 +333,16 @@ export default function FinanceKurView({
 
   const handleCapitalAdjustment = async (e: React.FormEvent) => {
     e.preventDefault();
+    const ok = await confirmDialog({
+      title: "Konfirmasi Pencatatan Mutasi Modal & Prive",
+      description:
+        "Mutasi ini akan langsung mengubah Saldo Kas Siap Kulakan dan tercatat permanen pada Buku Kas toko.",
+      detailText: `Jenis: ${adjType} • Nominal: ${formatRp(Number(adjAmount || 0))}`,
+      confirmLabel: "Ya, Catat Mutasi",
+      cancelLabel: "Batal",
+      variant: adjType === "OWNER_DRAWING" ? "warning" : "primary",
+    });
+    if (!ok) return;
     setSubmitting(true);
     setErrorMsg(null);
     setFeedbackMsg(null);
@@ -369,6 +381,16 @@ export default function FinanceKurView({
 
   const handleUpdateFreezerElec = async (e: React.FormEvent) => {
     e.preventDefault();
+    const ok = await confirmDialog({
+      title: "Simpan Perubahan Tarif Listrik Freezer?",
+      description:
+        "Beban listrik harian chest freezer akan diperbarui dan langsung dicatat ke dalam Buku Kas operasional.",
+      detailText: `Beban Baru: ${formatRp(Number(elecCostInput || 0))} / hari`,
+      confirmLabel: "Ya, Simpan Beban Listrik",
+      cancelLabel: "Batal",
+      variant: "primary",
+    });
+    if (!ok) return;
     setSubmitting(true);
     setErrorMsg(null);
     setFeedbackMsg(null);
@@ -427,16 +449,88 @@ export default function FinanceKurView({
 
   if (loading) {
     return (
-      <div className="space-y-5 animate-pulse">
-        <div className="h-12 bg-slate-200 rounded-xl w-80" />
+      <div
+        className="space-y-5 animate-pulse"
+        role="status"
+        aria-busy="true"
+        aria-label="Memuat buku kas dan laporan KUR..."
+      >
+        {/* Header Skeleton */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="space-y-2">
+            <div className="h-7 bg-[#E2E8F0] rounded-lg w-64 sm:w-80" />
+            <div className="h-4 bg-[#F1F5F9] rounded-md w-72 sm:w-96" />
+          </div>
+          <div className="flex items-center gap-2.5">
+            <div className="h-10 bg-white border border-[#E5E9EC] rounded-xl w-36" />
+            <div className="h-10 bg-[#D7F0E6]/80 rounded-xl w-44" />
+          </div>
+        </div>
+
+        {/* 4 Financial KPI Cards Skeleton */}
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           {[1, 2, 3, 4].map((n) => (
-            <div key={n} className="h-36 bg-slate-200 rounded-2xl" />
+            <div
+              key={n}
+              className="min-h-[138px] rounded-2xl bg-white border border-[#E5E9EC] p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] flex flex-col justify-between"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="h-3.5 w-32 rounded bg-[#E2E8F0]" />
+                <div className="h-5 w-14 rounded-full bg-[#F1F5F9]" />
+              </div>
+              <div className="my-2">
+                <div className="h-7 w-40 rounded-lg bg-[#CBD5E1]" />
+              </div>
+              <div className="h-3 w-36 rounded bg-[#F1F5F9]" />
+            </div>
           ))}
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-          <div className="lg:col-span-7 h-96 bg-slate-200 rounded-2xl" />
-          <div className="lg:col-span-5 h-96 bg-slate-200 rounded-2xl" />
+
+        {/* 12-Column Split: Cashflow Chart + KUR Readiness Card */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
+          <div className="lg:col-span-7 rounded-2xl bg-white border border-[#E5E9EC] p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="space-y-1.5">
+                <div className="h-4 w-48 rounded bg-[#E2E8F0]" />
+                <div className="h-3 w-64 rounded bg-[#F1F5F9]" />
+              </div>
+              <div className="h-8 w-28 rounded-lg bg-[#F1F5F9]" />
+            </div>
+            <div className="h-64 rounded-xl bg-[#F8FAFC] border border-[#F1F5F9] p-4 flex items-end justify-between gap-3">
+              {[52, 68, 44, 80, 72, 90].map((pct, i) => (
+                <div
+                  key={i}
+                  style={{ height: `${pct}%` }}
+                  className="flex-1 rounded-t-lg bg-[#E2E8F0]"
+                />
+              ))}
+            </div>
+          </div>
+
+          <div className="lg:col-span-5 rounded-2xl bg-white border border-[#E5E9EC] p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] space-y-4">
+            <div className="space-y-1.5">
+              <div className="h-4 w-44 rounded bg-[#E2E8F0]" />
+              <div className="h-3 w-56 rounded bg-[#F1F5F9]" />
+            </div>
+            <div className="h-28 rounded-xl bg-[#F8FAFC] border border-[#E5E9EC] p-4 flex items-center gap-4">
+              <div className="w-16 h-16 rounded-full bg-[#E2E8F0] shrink-0" />
+              <div className="space-y-2 flex-1">
+                <div className="h-4 w-3/4 rounded bg-[#CBD5E1]" />
+                <div className="h-3 w-1/2 rounded bg-[#E2E8F0]" />
+              </div>
+            </div>
+            <div className="space-y-2.5">
+              {[1, 2, 3].map((r) => (
+                <div
+                  key={r}
+                  className="h-10 rounded-xl bg-[#F8FAFC] border border-[#F1F5F9] px-3 flex items-center justify-between"
+                >
+                  <div className="h-3 w-36 rounded bg-[#E2E8F0]" />
+                  <div className="h-3 w-20 rounded bg-[#CBD5E1]" />
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     );

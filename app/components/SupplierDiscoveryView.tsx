@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { formatRp } from "./CommandCenterDashboard";
+import { useConfirmDialog } from "./ConfirmActionModal";
 import { useGooeyToastFlash } from "./GooeyToastProvider";
 
 interface SupplierDirItem {
@@ -122,6 +123,8 @@ interface PlaywrightScrapedItem {
   userRatingsTotal: number;
   distanceKm: number;
   mapsUrl: string;
+  openWaContacted?: boolean;
+  openWaStatusNote?: string;
 }
 
 function formatMonthYearId(isoDate: string | null | undefined): string {
@@ -232,6 +235,7 @@ export default function SupplierDiscoveryView({
   const [actionBusy, setActionBusy] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const confirmDialog = useConfirmDialog();
 
   useGooeyToastFlash(
     feedbackMsg,
@@ -456,9 +460,34 @@ export default function SupplierDiscoveryView({
         const rfqCodeLabel = json.data.createdRfqSession?.rfqCode
           ? ` (${json.data.createdRfqSession.rfqCode})`
           : "";
-        setFeedbackMsg(
-          `Playwright Scraping selesai untuk "${json.data.searchQuery}": menemukan ${list.length} supplier dan Agen OpenWA telah otomatis menghubungi ke-${list.length} nomor WhatsApp supplier tersebut${rfqCodeLabel}.`
+        const contactedCount = Number(
+          json.data.openWaAutoContactedCount ?? list.length
         );
+        const failedCount = Number(json.data.openWaFailedCount ?? 0);
+        const rawErrList: string[] = Array.isArray(json.data.openWaDeliveryErrors)
+          ? json.data.openWaDeliveryErrors
+          : [];
+        const firstReason =
+          rawErrList.length > 0
+            ? String(rawErrList[0])
+                .replace(/^[^:]+:\s*/, "")
+                .slice(0, 70)
+            : "";
+
+        if (list.length > 0 && contactedCount === 0) {
+          setErrorMsg(
+            `Ditemukan ${list.length} supplier${rfqCodeLabel}, namun BotWA gagal menghubungi supplier${firstReason ? ` (${firstReason})` : ""}.`
+          );
+        } else if (failedCount > 0) {
+          const reasonSuffix = firstReason ? ` (${firstReason})` : "";
+          setFeedbackMsg(
+            `${contactedCount} dari ${list.length} supplier dihubungi BotWA${rfqCodeLabel}. ${failedCount} nomor dilewati${reasonSuffix}.`
+          );
+        } else {
+          setFeedbackMsg(
+            `Scraping selesai${rfqCodeLabel}: ${contactedCount} supplier ditemukan & dihubungi BotWA.`
+          );
+        }
         await loadDirectory();
       }
     } catch (err) {
@@ -516,6 +545,16 @@ export default function SupplierDiscoveryView({
 
   const handleAddSupplier = async (e: React.FormEvent) => {
     e.preventDefault();
+    const ok = await confirmDialog({
+      title: "Tambahkan Mitra Distributor B2B?",
+      description:
+        "Data distributor baru akan disimpan ke dalam direktori supplier toko untuk pengadaan kulakan.",
+      detailText: `${suppName} (${suppPhone})`,
+      confirmLabel: "Ya, Simpan Supplier",
+      cancelLabel: "Batal",
+      variant: "primary",
+    });
+    if (!ok) return;
     setErrorMsg(null);
     setFeedbackMsg(null);
     const res = await fetch("/api/v1/suppliers", {
@@ -545,6 +584,20 @@ export default function SupplierDiscoveryView({
   };
 
   const handleApproveAction = async (rfq: RfqSessionItem) => {
+    const isRfqDispatch = rfq.status === "AWAITING_OWNER_RFQ_APPROVAL";
+    const ok = await confirmDialog({
+      title: isRfqDispatch
+        ? "Kirim Permintaan Penawaran (RFQ)?"
+        : "Setujui & Terbitkan Purchase Order?",
+      description: isRfqDispatch
+        ? "Agen AI akan mengirimkan pesan negosiasi kulakan ke kandidat distributor terpilih via WhatsApp."
+        : "Purchase Order resmi akan diterbitkan dan saldo Kas Siap Kulakan akan langsung dikunci sesuai nilai pesanan.",
+      detailText: `${rfq.rfqCode} • ${rfq.requestedQtyBoxes} Dus ${rfq.productName}`,
+      confirmLabel: isRfqDispatch ? "Ya, Kirim RFQ" : "Ya, Terbitkan PO",
+      cancelLabel: "Batal",
+      variant: "primary",
+    });
+    if (!ok) return;
     setActionBusy(true);
     setErrorMsg(null);
     setFeedbackMsg(null);
@@ -629,6 +682,18 @@ export default function SupplierDiscoveryView({
   };
 
   const handleCancelPo = async (poId: string) => {
+    const ok = await confirmDialog({
+      title: "Konfirmasi Pembatalan Purchase Order",
+      description:
+        "Dokumen PO ini akan dibatalkan dan dana yang dikunci akan dikembalikan ke Saldo Kas Siap Kulakan.",
+      detailText: poDetailModal
+        ? `${poDetailModal.po_number} • ${poDetailModal.supplier_name}`
+        : `ID Dokumen: ${poId}`,
+      confirmLabel: "Ya, Batalkan PO",
+      cancelLabel: "Batal",
+      variant: "danger",
+    });
+    if (!ok) return;
     setErrorMsg(null);
     setFeedbackMsg(null);
     const res = await fetch(`/api/v1/procurement/po/${poId}/cancel`, {
@@ -1011,8 +1076,16 @@ export default function SupplierDiscoveryView({
                       <span className="font-mono text-xs font-bold text-[#0F6352]">
                         {item.phoneWhatsapp}
                       </span>
-                      <span className="text-[11px] text-[#64748B]">
-                        Dihubungi Agen OpenWA
+                      <span
+                        className={`text-[11px] ${
+                          item.openWaContacted === false
+                            ? "text-amber-700 font-medium"
+                            : "text-[#64748B]"
+                        }`}
+                      >
+                        {item.openWaContacted === false
+                          ? item.openWaStatusNote || "Nomor tidak aktif di WhatsApp"
+                          : "Terkirim via BotWA"}
                       </span>
                     </div>
 
@@ -1049,12 +1122,37 @@ export default function SupplierDiscoveryView({
 
       {/* Top 3 Supplier Candidate Cards */}
       {loading ? (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 animate-pulse">
+        <div
+          className="grid grid-cols-1 lg:grid-cols-3 gap-4 animate-pulse"
+          role="status"
+          aria-busy="true"
+          aria-label="Memuat kandidat distributor B2B..."
+        >
           {[1, 2, 3].map((n) => (
             <div
               key={n}
-              className="h-64 rounded-2xl bg-white border border-[#E5E9EC]"
-            />
+              className="rounded-2xl bg-white border border-[#E5E9EC] p-5 space-y-4 shadow-[0_1px_2px_rgba(15,23,42,0.03)]"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="h-6 w-24 rounded-full bg-[#E2E8F0]" />
+                <div className="h-4 w-16 rounded bg-[#F1F5F9]" />
+              </div>
+              <div className="space-y-2">
+                <div className="h-5 w-3/4 rounded bg-[#CBD5E1]" />
+                <div className="h-3.5 w-1/2 rounded bg-[#F1F5F9]" />
+              </div>
+              <div className="grid grid-cols-2 gap-2.5 pt-1">
+                <div className="h-14 rounded-xl bg-[#F8FAFC] border border-[#E5E9EC] p-2.5 space-y-1.5">
+                  <div className="h-2.5 w-16 rounded bg-[#E2E8F0]" />
+                  <div className="h-4 w-24 rounded bg-[#CBD5E1]" />
+                </div>
+                <div className="h-14 rounded-xl bg-[#F8FAFC] border border-[#E5E9EC] p-2.5 space-y-1.5">
+                  <div className="h-2.5 w-16 rounded bg-[#E2E8F0]" />
+                  <div className="h-4 w-20 rounded bg-[#CBD5E1]" />
+                </div>
+              </div>
+              <div className="h-9 w-full rounded-xl bg-[#F8FAFC] border border-[#E5E9EC]" />
+            </div>
           ))}
         </div>
       ) : top3Candidates.length === 0 ? (
@@ -1303,7 +1401,24 @@ export default function SupplierDiscoveryView({
                 : "justify-start"
             }`}
           >
-            {chatDisplayBubbles.length === 0 ? (
+            {loading && chatDisplayBubbles.length === 0 ? (
+              <div className="space-y-3 animate-pulse py-2">
+                <div className="flex flex-col items-end">
+                  <div className="h-2.5 w-32 rounded bg-[#E2E8F0] mb-1" />
+                  <div className="w-[82%] rounded-2xl bg-[#EBF8F2] border border-[#CCE8DB] p-3 space-y-1.5">
+                    <div className="h-3 w-full rounded bg-[#CBD5E1]" />
+                    <div className="h-3 w-2/3 rounded bg-[#E2E8F0]" />
+                  </div>
+                </div>
+                <div className="flex flex-col items-start">
+                  <div className="h-2.5 w-36 rounded bg-[#E2E8F0] mb-1" />
+                  <div className="w-[78%] rounded-2xl bg-white border border-[#E2E8F0] p-3 space-y-1.5">
+                    <div className="h-3 w-full rounded bg-[#CBD5E1]" />
+                    <div className="h-3 w-3/4 rounded bg-[#E2E8F0]" />
+                  </div>
+                </div>
+              </div>
+            ) : chatDisplayBubbles.length === 0 ? (
               <div className="text-center text-xs text-[#64748B] py-8 px-4 space-y-1.5">
                 <p className="font-semibold text-[#334155]">
                   Belum ada riwayat negosiasi WhatsApp untuk toko ini.
@@ -1502,12 +1617,27 @@ export default function SupplierDiscoveryView({
                 );
               })}
 
-              {!pendingRfq && purchaseOrders.length === 0 && (
+              {loading && !pendingRfq && purchaseOrders.length === 0 ? (
+                <div className="space-y-2.5 animate-pulse">
+                  {[1, 2].map((item) => (
+                    <div
+                      key={item}
+                      className="rounded-xl border border-[#E5E9EC] px-4 py-3 flex items-center justify-between gap-3"
+                    >
+                      <div className="space-y-1.5 flex-1">
+                        <div className="h-3.5 w-48 rounded bg-[#CBD5E1]" />
+                        <div className="h-2.5 w-36 rounded bg-[#E2E8F0]" />
+                      </div>
+                      <div className="h-9 w-32 rounded-xl bg-[#F1F5F9] shrink-0" />
+                    </div>
+                  ))}
+                </div>
+              ) : !pendingRfq && purchaseOrders.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-[#CBD5E1] px-4 py-5 text-center text-xs text-[#64748B]">
                   Belum ada pengajuan PO aktif. Klik{" "}
                   <strong>+ Scraping Baru</strong> untuk memulai negosiasi.
                 </div>
-              )}
+              ) : null}
             </div>
           </div>
 

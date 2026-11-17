@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import { formatRp } from "./CommandCenterDashboard";
+import { useConfirmDialog } from "./ConfirmActionModal";
 import { useGooeyToastFlash } from "./GooeyToastProvider";
 
 interface SupplierQuoteItem {
@@ -136,7 +137,7 @@ export default function WhatsappAgentOcrView({
     useState<string>("+6282298606699");
   const [ownerName, setOwnerName] = useState<string>("Pemilik Toko");
   const [openWaAgentPhone, setOpenWaAgentPhone] =
-    useState<string>("+628116800999");
+    useState<string>("+62895351009379");
 
   const [rfqSessions, setRfqSessions] = useState<RfqSessionItem[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderItem[]>([]);
@@ -148,6 +149,7 @@ export default function WhatsappAgentOcrView({
   const [loading, setLoading] = useState(true);
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const confirmDialog = useConfirmDialog();
 
   useGooeyToastFlash(
     feedbackMsg,
@@ -421,6 +423,16 @@ export default function WhatsappAgentOcrView({
 
   const handleSaveAndTestOpenWa = async (e: React.FormEvent) => {
     e.preventDefault();
+    const ok = await confirmDialog({
+      title: "Simpan Perubahan Konfigurasi OpenWA?",
+      description:
+        "Pengaturan URL server dan API Key OpenWA akan diperbarui serta diuji koneksinya ke nomor WhatsApp Owner.",
+      detailText: `Endpoint: ${openWaApiUrl}`,
+      confirmLabel: "Ya, Simpan & Uji",
+      cancelLabel: "Batal",
+      variant: "primary",
+    });
+    if (!ok) return;
     setTestingOpenWa(true);
     setFeedbackMsg(null);
     setErrorMsg(null);
@@ -595,7 +607,46 @@ export default function WhatsappAgentOcrView({
               )}
             </div>
 
-            {activeRfq && activeStatusMeta ? (
+            {loading && rfqSessions.length === 0 ? (
+              <div
+                className="space-y-3.5 animate-pulse"
+                role="status"
+                aria-busy="true"
+                aria-label="Memuat sesi negosiasi Auto-RFQ..."
+              >
+                <div className="flex items-center justify-between gap-3 bg-[#F8FAFC] px-4 py-3 rounded-xl border border-[#E2E8F0]">
+                  <div className="flex items-center gap-2">
+                    <div className="h-4 w-48 rounded bg-[#CBD5E1]" />
+                    <div className="h-5 w-24 rounded-full bg-[#E2E8F0]" />
+                  </div>
+                  <div className="h-3.5 w-28 rounded bg-[#E2E8F0]" />
+                </div>
+                <div className="overflow-hidden rounded-xl border border-[#E2E8F0] divide-y divide-[#F1F5F9]">
+                  <div className="bg-[#F8FAFC] px-3 py-2.5 flex items-center justify-between gap-3">
+                    <div className="h-3 w-24 rounded bg-[#CBD5E1]" />
+                    <div className="h-3 w-20 rounded bg-[#E2E8F0]" />
+                    <div className="h-3 w-14 rounded bg-[#E2E8F0]" />
+                    <div className="h-3 w-16 rounded bg-[#E2E8F0]" />
+                    <div className="h-3 w-16 rounded bg-[#E2E8F0]" />
+                  </div>
+                  {[1, 2, 3].map((r) => (
+                    <div
+                      key={r}
+                      className="px-3 py-3 flex items-center justify-between gap-3"
+                    >
+                      <div className="space-y-1.5">
+                        <div className="h-3.5 w-32 rounded bg-[#CBD5E1]" />
+                        <div className="h-2.5 w-24 rounded bg-[#F1F5F9]" />
+                      </div>
+                      <div className="h-3.5 w-20 rounded bg-[#E2E8F0]" />
+                      <div className="h-3.5 w-14 rounded bg-[#F1F5F9]" />
+                      <div className="h-3.5 w-16 rounded bg-[#E2E8F0]" />
+                      <div className="h-5 w-20 rounded-full bg-[#F1F5F9]" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : activeRfq && activeStatusMeta ? (
               <div className="space-y-3.5">
                 <div className="flex flex-wrap items-center justify-between gap-3 bg-[#F8FAFC] px-4 py-3 rounded-xl border border-[#E2E8F0] text-xs">
                   <div className="flex flex-wrap items-center gap-2">
@@ -986,8 +1037,36 @@ export default function WhatsappAgentOcrView({
             {/* Clean Light Chat Feed */}
             <div className="bg-[#F8FAFC] p-4 space-y-3 h-[430px] overflow-y-auto text-xs">
               {loading ? (
-                <div className="text-center text-[#64748B] py-12">
-                  Memuat riwayat percakapan OpenWA...
+                <div
+                  className="space-y-3.5 animate-pulse py-1"
+                  role="status"
+                  aria-busy="true"
+                  aria-label="Memuat riwayat percakapan OpenWA..."
+                >
+                  {[1, 2, 3, 4].map((idx) => {
+                    const isLeft = idx % 2 === 1;
+                    return (
+                      <div
+                        key={idx}
+                        className={`flex flex-col ${
+                          isLeft ? "items-start" : "items-end"
+                        }`}
+                      >
+                        <div className="h-2.5 w-36 rounded bg-[#E2E8F0] mb-1.5" />
+                        <div
+                          className={`w-[78%] rounded-2xl p-3.5 space-y-2 border ${
+                            isLeft
+                              ? "bg-white border-[#E2E8F0]"
+                              : "bg-[#EBF8F2] border-[#CCE8DB]"
+                          }`}
+                        >
+                          <div className="h-3 w-full rounded bg-[#CBD5E1]" />
+                          <div className="h-3 w-4/5 rounded bg-[#E2E8F0]" />
+                          <div className="h-2.5 w-1/2 rounded bg-[#F1F5F9]" />
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : filteredMessages.length === 0 ? (
                 <div className="text-center text-[#64748B] py-16 px-4 space-y-1">

@@ -8,6 +8,7 @@ import React, {
   forwardRef,
   useImperativeHandle,
 } from "react";
+import { useConfirmDialog } from "./ConfirmActionModal";
 import { useGooeyToastFlash } from "./GooeyToastProvider";
 
 interface CommandCenterSummary {
@@ -92,6 +93,14 @@ interface CommandCenterSummary {
   };
 }
 
+interface UnifiedPosReceiptLineItem {
+  id: string;
+  productName: string;
+  soldUnitType: "PACK" | "BOX";
+  soldQty: number;
+  subtotalAmount: number;
+}
+
 interface UnifiedTxItem {
   id: string;
   recordType: "PO" | "POS";
@@ -106,6 +115,12 @@ interface UnifiedTxItem {
   statusVariant: "SUCCESS" | "INFO" | "WARNING";
   actionLabel: "Lihat PO" | "Cetak Struk";
   createdAt: string;
+  cashierLabel?: string;
+  paymentMethod?: string;
+  cashReceivedRp?: number;
+  changeAmountRp?: number;
+  storePhone?: string;
+  receiptItems?: UnifiedPosReceiptLineItem[];
 }
 
 interface StoreUserItem {
@@ -194,6 +209,7 @@ const CommandCenterDashboard = forwardRef<
   const [txSearch, setTxSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const confirmDialog = useConfirmDialog();
 
   useGooeyToastFlash(null, errorMsg, undefined, () => setErrorMsg(null));
 
@@ -203,6 +219,9 @@ const CommandCenterDashboard = forwardRef<
   const [selectedTxModal, setSelectedTxModal] = useState<UnifiedTxItem | null>(
     null
   );
+  const [measuredReceiptHeightMm, setMeasuredReceiptHeightMm] = useState<
+    number | null
+  >(null);
 
   // Access & Whitelist Form
   const [storeUsers, setStoreUsers] = useState<StoreUserItem[]>([]);
@@ -363,6 +382,20 @@ const CommandCenterDashboard = forwardRef<
   const handleToggleSubscription = async (
     targetTier: "FREEMIUM_STARTER" | "MANAJERKU_PRO"
   ) => {
+    const ok = await confirmDialog({
+      title: "Konfirmasi Perubahan Paket Toko",
+      description:
+        "Status paket langganan operasional toko Anda akan segera diubah di database.",
+      detailText: `Target Paket: ${
+        targetTier === "MANAJERKU_PRO"
+          ? "Manajerku Pro (Rp49.000/bulan)"
+          : "Freemium Starter (Rp0/bulan)"
+      }`,
+      confirmLabel: "Ya, Ubah Paket",
+      cancelLabel: "Batal",
+      variant: "primary",
+    });
+    if (!ok) return;
     setUserActionMsg(null);
     const res = await fetch("/api/v1/stores/subscription", {
       method: "POST",
@@ -390,6 +423,16 @@ const CommandCenterDashboard = forwardRef<
 
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
+    const ok = await confirmDialog({
+      title: "Konfirmasi Penambahan Akses Pengguna",
+      description:
+        "Pengguna baru akan ditambahkan ke daftar akses staf toko dan Whitelist WhatsApp.",
+      detailText: `${newUserName} (${newUserPhone}) • Peran: ${newUserRole}`,
+      confirmLabel: "Ya, Tambahkan",
+      cancelLabel: "Batal",
+      variant: "primary",
+    });
+    if (!ok) return;
     setUserActionMsg(null);
     const res = await fetch("/api/v1/users", {
       method: "POST",
@@ -436,6 +479,16 @@ const CommandCenterDashboard = forwardRef<
 
   const handleCompleteOnboarding = async (e: React.FormEvent) => {
     e.preventDefault();
+    const ok = await confirmDialog({
+      title: "Simpan Konfigurasi Toko Baru?",
+      description:
+        "Data profil toko, modal kas awal kulakan, dan tarif listrik freezer akan disimpan ke sistem.",
+      detailText: `${onboardStoreName} (${onboardBranch})`,
+      confirmLabel: "Ya, Simpan Konfigurasi",
+      cancelLabel: "Batal",
+      variant: "primary",
+    });
+    if (!ok) return;
     setOnboardStatusMsg(null);
     const res = await fetch("/api/v1/onboarding/complete", {
       method: "POST",
@@ -466,24 +519,107 @@ const CommandCenterDashboard = forwardRef<
 
   if (loading && !summary) {
     return (
-      <div className="space-y-6 animate-pulse" aria-busy="true">
-        <div className="flex items-center justify-between gap-4">
+      <div
+        className="space-y-6 animate-pulse"
+        role="status"
+        aria-busy="true"
+        aria-label="Memuat ringkasan Command Center..."
+      >
+        {/* Header Skeleton matching Command Center Title & Action Buttons */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="space-y-2">
-            <div className="h-7 bg-slate-200 rounded-lg w-72" />
-            <div className="h-4 bg-slate-200 rounded-lg w-96" />
+            <div className="h-7 bg-[#E2E8F0] rounded-lg w-64 sm:w-80" />
+            <div className="h-4 bg-[#F1F5F9] rounded-md w-72 sm:w-96" />
           </div>
-          <div className="h-10 bg-slate-200 rounded-xl w-56" />
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="h-10 bg-white border border-[#E5E9EC] rounded-xl w-36" />
+            <div className="h-10 bg-white border border-[#E5E9EC] rounded-xl w-36" />
+            <div className="h-10 bg-[#D7F0E6]/80 rounded-xl w-40" />
+          </div>
         </div>
+
+        {/* 4 KPI Cards Skeleton matching min-h-[138px] structure */}
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           {[1, 2, 3, 4].map((n) => (
-            <div key={n} className="h-36 bg-slate-200 rounded-2xl" />
+            <div
+              key={n}
+              className="min-h-[138px] rounded-2xl bg-white border border-[#E5E9EC] p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] flex flex-col justify-between"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="h-3.5 w-32 rounded bg-[#E2E8F0]" />
+                <div className="h-5 w-16 rounded-full bg-[#F1F5F9]" />
+              </div>
+              <div className="my-2">
+                <div className="h-7 w-40 rounded-lg bg-[#CBD5E1]" />
+              </div>
+              <div className="h-3 w-36 rounded bg-[#F1F5F9]" />
+            </div>
           ))}
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-          <div className="lg:col-span-7 h-80 bg-slate-200 rounded-2xl" />
-          <div className="lg:col-span-5 h-80 bg-slate-200 rounded-2xl" />
+
+        {/* Main 12-Col Split Skeleton: Left 7-col Chart + Right 5-col FEFO & AI Action Panel */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
+          <div className="lg:col-span-7 rounded-2xl bg-white border border-[#E5E9EC] p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="space-y-1.5">
+                <div className="h-4 w-48 rounded bg-[#E2E8F0]" />
+                <div className="h-3 w-64 rounded bg-[#F1F5F9]" />
+              </div>
+              <div className="h-8 w-28 rounded-lg bg-[#F1F5F9]" />
+            </div>
+            <div className="h-56 w-full rounded-xl bg-[#F8FAFC] border border-[#F1F5F9] p-4 flex items-end justify-between gap-3">
+              {[45, 70, 58, 86, 64, 92, 76].map((pct, idx) => (
+                <div
+                  key={idx}
+                  style={{ height: `${pct}%` }}
+                  className="flex-1 rounded-t-lg bg-[#E2E8F0]"
+                />
+              ))}
+            </div>
+          </div>
+
+          <div className="lg:col-span-5 rounded-2xl bg-white border border-[#E5E9EC] p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] space-y-4">
+            <div className="space-y-1.5">
+              <div className="h-4 w-44 rounded bg-[#E2E8F0]" />
+              <div className="h-3 w-56 rounded bg-[#F1F5F9]" />
+            </div>
+            <div className="space-y-3">
+              {[1, 2, 3].map((item) => (
+                <div
+                  key={item}
+                  className="rounded-xl bg-[#F8FAFC] border border-[#E5E9EC] p-3.5 flex items-center justify-between gap-3"
+                >
+                  <div className="space-y-1.5 flex-1">
+                    <div className="h-3.5 w-3/4 rounded bg-[#E2E8F0]" />
+                    <div className="h-3 w-1/2 rounded bg-[#F1F5F9]" />
+                  </div>
+                  <div className="h-8 w-20 rounded-lg bg-[#E2E8F0] shrink-0" />
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
-        <div className="h-64 bg-slate-200 rounded-2xl" />
+
+        {/* Bottom Recent Transactions & PO Table Skeleton */}
+        <div className="rounded-2xl bg-white border border-[#E5E9EC] p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="h-4 w-52 rounded bg-[#E2E8F0]" />
+            <div className="h-8 w-36 rounded-lg bg-[#F1F5F9]" />
+          </div>
+          <div className="space-y-2.5">
+            {[1, 2, 3, 4].map((row) => (
+              <div
+                key={row}
+                className="h-12 w-full rounded-xl bg-[#F8FAFC] border border-[#F1F5F9] px-4 flex items-center justify-between gap-4"
+              >
+                <div className="h-3.5 w-40 rounded bg-[#E2E8F0]" />
+                <div className="h-3.5 w-28 rounded bg-[#F1F5F9] hidden sm:block" />
+                <div className="h-3.5 w-24 rounded bg-[#E2E8F0]" />
+                <div className="h-6 w-20 rounded-full bg-[#F1F5F9]" />
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     );
   }
@@ -581,6 +717,7 @@ const CommandCenterDashboard = forwardRef<
 
   return (
     <div className="space-y-5">
+      <div className={selectedTxModal ? "print:hidden space-y-5" : "space-y-5"}>
       {/* Page Title & Primary Action Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
@@ -1533,98 +1670,416 @@ const CommandCenterDashboard = forwardRef<
           </span>
         </div>
       </section>
+      </div>
 
-      {/* Modal 1: Lihat PO / Cetak Struk Preview */}
-      {selectedTxModal && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="tx-modal-title"
-          className="fixed inset-0 z-50 bg-slate-900/45 flex items-center justify-center p-4"
-        >
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-[#E2E8F0] space-y-4">
-            <div className="flex items-center justify-between border-b border-[#F1F5F9] pb-3">
-              <div>
-                <span className="text-[11px] font-bold uppercase text-[#0F6352]">
-                  {selectedTxModal.recordType === "PO"
-                    ? "Dokumen Purchase Order Resmi"
-                    : "Struk Transaksi Kasir POS"}
-                </span>
-                <h3
-                  id="tx-modal-title"
-                  className="text-lg font-bold text-[#0F172A]"
+      {/* Modal 1: Lihat PO / Cetak Struk Termal POS */}
+      {selectedTxModal &&
+        (selectedTxModal.recordType === "POS" ? (
+          (() => {
+            const rawIso = selectedTxModal.createdAt || new Date().toISOString();
+            const dateObj = new Date(
+              rawIso.includes("T") ? rawIso : `${rawIso.replace(" ", "T")}Z`
+            );
+            const pad2 = (n: number) => n.toString().padStart(2, "0");
+            const dateYmd = Number.isNaN(dateObj.getTime())
+              ? rawIso.slice(0, 10)
+              : `${dateObj.getFullYear()}-${pad2(
+                  dateObj.getMonth() + 1
+                )}-${pad2(dateObj.getDate())}`;
+            const timeHms = Number.isNaN(dateObj.getTime())
+              ? "08:46:36"
+              : `${pad2(dateObj.getHours())}:${pad2(
+                  dateObj.getMinutes()
+                )}:${pad2(dateObj.getSeconds())}`;
+
+            const rawPhone =
+              selectedTxModal.storePhone ||
+              storeUsers.find((u) => u.role === "OWNER")?.phoneWhatsapp ||
+              "082298606699";
+            const displayPhone = rawPhone.startsWith("+62")
+              ? `0${rawPhone.slice(3)}`
+              : rawPhone;
+
+            const digitsFromDate = `${dateYmd.replace(
+              /-/g,
+              ""
+            )}${timeHms.replace(/:/g, "")}`;
+            const invDigits =
+              selectedTxModal.referenceCode.replace(/\D/g, "") || "01";
+            const numericRefId = `164135${digitsFromDate}${invDigits.slice(
+              -2
+            )}`;
+
+            const seqSuffix =
+              selectedTxModal.referenceCode.split("-").pop() || "1";
+            const queueNoLabel = `No.0-${Number(seqSuffix) || seqSuffix}`;
+
+            const lineItems: UnifiedPosReceiptLineItem[] =
+              selectedTxModal.receiptItems &&
+              selectedTxModal.receiptItems.length > 0
+                ? selectedTxModal.receiptItems
+                : (() => {
+                    const parts = (selectedTxModal.itemsSummary || "")
+                      .split("+")
+                      .map((s) => s.trim())
+                      .filter(Boolean);
+                    if (parts.length === 0) {
+                      return [
+                        {
+                          id: `${selectedTxModal.id}-fallback`,
+                          productName:
+                            selectedTxModal.itemsSummary || "Item Kasir",
+                          soldUnitType: "PACK" as const,
+                          soldQty: 1,
+                          subtotalAmount: selectedTxModal.totalAmountRp,
+                        },
+                      ];
+                    }
+                    const perPart = Math.round(
+                      selectedTxModal.totalAmountRp / parts.length
+                    );
+                    return parts.map((part, idx) => {
+                      const m = part.match(
+                        /^(\d+)\s*(Dus|Pack|Bungkus|Kardus)?\s*(.+)$/i
+                      );
+                      const qty = m ? Math.max(1, Number(m[1])) : 1;
+                      const unitRaw = (m?.[2] || "Pack").toLowerCase();
+                      const soldUnitType: "PACK" | "BOX" =
+                        unitRaw === "dus" || unitRaw === "kardus"
+                          ? "BOX"
+                          : "PACK";
+                      const prodName = m?.[3]?.trim() || part;
+                      const isLast = idx === parts.length - 1;
+                      const sub = isLast
+                        ? selectedTxModal.totalAmountRp -
+                          perPart * (parts.length - 1)
+                        : perPart;
+                      return {
+                        id: `${selectedTxModal.id}-part-${idx + 1}`,
+                        productName: prodName,
+                        soldUnitType,
+                        soldQty: qty,
+                        subtotalAmount: Math.max(0, sub),
+                      };
+                    });
+                  })();
+
+            const totalQtyUnits = lineItems.reduce(
+              (acc, it) => acc + it.soldQty,
+              0
+            );
+
+            const payLabel =
+              selectedTxModal.paymentMethod === "CASH" ||
+              selectedTxModal.statusBadge.toLowerCase().includes("tunai")
+                ? "Cash"
+                : "QRIS";
+
+            const cleanInvCode = selectedTxModal.referenceCode.replace(
+              /^#/,
+              ""
+            );
+            const fallbackPrintHeightMm = Math.max(
+              158,
+              138 + lineItems.length * 16
+            );
+            const effectivePrintHeightMm = Math.max(
+              fallbackPrintHeightMm,
+              measuredReceiptHeightMm ?? 0
+            );
+
+            const cashierDisplay =
+              selectedTxModal.cashierLabel ||
+              selectedTxModal.itemsSubLabel.split("•")[0]?.trim() ||
+              "Kasir 01";
+            const cashReceivedRp =
+              selectedTxModal.cashReceivedRp ?? selectedTxModal.totalAmountRp;
+            const changeAmountRp = selectedTxModal.changeAmountRp ?? 0;
+
+            return (
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="pos-receipt-modal-title"
+                className="fixed inset-0 z-50 bg-slate-900/55 flex items-center justify-center p-4 overflow-y-auto print:static print:inset-auto print:z-auto print:bg-white print:p-0 print:m-0 print:overflow-visible print:block"
+              >
+                <style>{`
+                  @media print {
+                    @page {
+                      size: 80mm ${effectivePrintHeightMm}mm;
+                      margin: 0mm;
+                    }
+                    html, body {
+                      width: 80mm !important;
+                      min-height: 0 !important;
+                      height: auto !important;
+                      margin: 0 !important;
+                      padding: 0 !important;
+                      background: #ffffff !important;
+                      color: #111111 !important;
+                      -webkit-print-color-adjust: exact !important;
+                      print-color-adjust: exact !important;
+                    }
+                    #pos-thermal-receipt {
+                      width: 80mm !important;
+                      max-width: 80mm !important;
+                      margin: 0 !important;
+                      padding: 5.5mm 5mm !important;
+                      border: none !important;
+                      box-shadow: none !important;
+                      border-radius: 0 !important;
+                      box-sizing: border-box !important;
+                      page-break-inside: avoid !important;
+                      break-inside: avoid !important;
+                    }
+                  }
+                `}</style>
+                <div className="bg-[#F4F6F8] rounded-2xl max-w-md w-full p-4 sm:p-5 shadow-2xl border border-[#E2E8F0] space-y-4 max-h-[92vh] overflow-y-auto print:bg-white print:max-w-none print:w-auto print:max-h-none print:overflow-visible print:shadow-none print:border-0 print:rounded-none print:p-0 print:m-0 print:space-y-0">
+                  {/* Thermal Paper Sheet */}
+                  <article
+                    id="pos-thermal-receipt"
+                    ref={(el) => {
+                      if (el) {
+                        const heightMm =
+                          Math.ceil((el.offsetHeight * 25.4) / 96) + 8;
+                        if (
+                          heightMm > 90 &&
+                          heightMm !== measuredReceiptHeightMm
+                        ) {
+                          setMeasuredReceiptHeightMm(heightMm);
+                        }
+                      }
+                    }}
+                    className="bg-white text-[#111111] max-w-[330px] mx-auto px-5 py-6 rounded-lg shadow-xs border border-[#E2E8F0] text-[12.5px] leading-[1.45] font-sans"
+                  >
+                    {/* Top Centered Store Header (No Logo) */}
+                    <div className="text-center space-y-0.5">
+                      <h3
+                        id="pos-receipt-modal-title"
+                        className="text-[18px] font-medium text-[#111111] tracking-tight leading-snug"
+                      >
+                        {summary.store.name || "Manajerku Frozen Food"}
+                      </h3>
+                      <div className="text-[12.5px] text-[#111111]">
+                        {summary.store.address || "Banda Aceh"}
+                      </div>
+                      <div className="text-[12.5px] text-[#111111]">
+                        {summary.store.branchName || "Cabang Utama"}
+                      </div>
+                      <div className="text-[12.5px] text-[#111111]">
+                        No. Telp {displayPhone}
+                      </div>
+                      <div className="text-[12.5px] text-[#111111] tabular-nums">
+                        {numericRefId}
+                      </div>
+                    </div>
+
+                    {/* Dashed Divider 1 */}
+                    <div className="border-b border-dashed border-[#222222] my-3" />
+
+                    {/* Date/Time & Cashier/Customer Metadata */}
+                    <div className="flex justify-between items-start gap-3 text-[12.5px]">
+                      <div className="space-y-0.5 tabular-nums">
+                        <div>{dateYmd}</div>
+                        <div>{timeHms}</div>
+                      </div>
+                      <div className="text-right space-y-0.5">
+                        <div>{cashierDisplay}</div>
+                        <div>{selectedTxModal.partnerName}</div>
+                        <div>{selectedTxModal.partnerSubLabel}</div>
+                      </div>
+                    </div>
+                    <div className="mt-2.5 text-[12.5px]">{queueNoLabel}</div>
+
+                    {/* Dashed Divider 2 */}
+                    <div className="border-b border-dashed border-[#222222] my-3" />
+
+                    {/* Numbered Items List */}
+                    <div className="space-y-2">
+                      {lineItems.map((item, idx) => {
+                        const unitLabel =
+                          item.soldUnitType === "BOX" ? "dus" : "pack";
+                        const effectiveUnitPrice = Math.round(
+                          item.subtotalAmount / Math.max(1, item.soldQty)
+                        );
+                        return (
+                          <div key={item.id} className="space-y-0.5">
+                            <div className="font-bold text-[#111111]">
+                              {idx + 1}. {item.productName}
+                            </div>
+                            <div className="flex justify-between items-baseline gap-2 pl-2.5">
+                              <span className="tabular-nums">
+                                {item.soldQty} {unitLabel} x{" "}
+                                {effectiveUnitPrice.toLocaleString("id-ID")}
+                              </span>
+                              <span className="tabular-nums shrink-0">
+                                {formatRp(item.subtotalAmount)}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Dashed Divider 3 */}
+                    <div className="border-b border-dashed border-[#222222] my-3" />
+
+                    {/* Total QTY */}
+                    <div className="text-[12.5px] tabular-nums">
+                      Total QTY : {totalQtyUnits}
+                    </div>
+
+                    {/* Dashed Divider 4 */}
+                    <div className="border-b border-dashed border-[#222222] my-3" />
+
+                    {/* Sub Total, Total, Bayar, Kembali */}
+                    <div className="space-y-1 text-[12.5px]">
+                      <div className="flex justify-between items-baseline">
+                        <span>Sub Total</span>
+                        <span className="tabular-nums">
+                          {formatRp(selectedTxModal.totalAmountRp)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-baseline font-bold text-[14px]">
+                        <span>Total</span>
+                        <span className="tabular-nums">
+                          {formatRp(selectedTxModal.totalAmountRp)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-baseline pt-0.5">
+                        <span>Bayar ({payLabel})</span>
+                        <span className="tabular-nums">
+                          {formatRp(cashReceivedRp)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-baseline">
+                        <span>Kembali</span>
+                        <span className="tabular-nums">
+                          {formatRp(changeAmountRp)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Centered Footer */}
+                    <div className="mt-5 text-center space-y-2 text-[12px]">
+                      <div>Terimakasih Telah Berbelanja</div>
+                      <div className="space-y-0.5">
+                        <div>Link Kritik dan Saran:</div>
+                        <div className="break-all">
+                          manajerku.id/e-receipt/{cleanInvCode}
+                        </div>
+                      </div>
+                    </div>
+                  </article>
+
+                  <div className="flex justify-end gap-2 pt-1 print:hidden text-xs">
+                    <button
+                      type="button"
+                      onClick={() => window.print()}
+                      className="min-h-[40px] px-4 py-2 rounded-xl bg-[#0F6352] hover:bg-[#0B4F41] text-white font-semibold"
+                    >
+                      Cetak Struk Termal
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedTxModal(null)}
+                      className="min-h-[40px] px-4 py-2 rounded-xl bg-[#FFFFFF] hover:bg-[#E2E8F0] border border-[#CBD5E1] text-[#334155] font-semibold"
+                    >
+                      Selesai
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()
+        ) : (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="tx-modal-title"
+            className="fixed inset-0 z-50 bg-slate-900/45 flex items-center justify-center p-4"
+          >
+            <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-[#E2E8F0] space-y-4">
+              <div className="flex items-center justify-between border-b border-[#F1F5F9] pb-3">
+                <div>
+                  <span className="text-[11px] font-bold uppercase text-[#0F6352]">
+                    Dokumen Purchase Order Resmi
+                  </span>
+                  <h3
+                    id="tx-modal-title"
+                    className="text-lg font-bold text-[#0F172A]"
+                  >
+                    {selectedTxModal.referenceCode}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Tutup pratinjau transaksi"
+                  onClick={() => setSelectedTxModal(null)}
+                  className="min-h-[36px] min-w-[36px] rounded-lg text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] text-sm font-bold flex items-center justify-center"
                 >
-                  {selectedTxModal.referenceCode}
-                </h3>
+                  ✕
+                </button>
               </div>
-              <button
-                type="button"
-                aria-label="Tutup pratinjau transaksi"
-                onClick={() => setSelectedTxModal(null)}
-                className="min-h-[36px] min-w-[36px] rounded-lg text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] text-sm font-bold flex items-center justify-center"
-              >
-                ✕
-              </button>
-            </div>
 
-            <div className="bg-[#F8FAFC] rounded-xl p-4 space-y-2 text-xs text-[#334155] border border-[#E5E9EC]">
-              <div className="flex justify-between gap-2">
-                <span className="text-[#64748B]">Mitra / Pelanggan:</span>
-                <span className="font-bold text-right">
-                  {selectedTxModal.partnerName}
-                </span>
+              <div className="bg-[#F8FAFC] rounded-xl p-4 space-y-2 text-xs text-[#334155] border border-[#E5E9EC]">
+                <div className="flex justify-between gap-2">
+                  <span className="text-[#64748B]">Mitra Distributor:</span>
+                  <span className="font-bold text-right">
+                    {selectedTxModal.partnerName}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <span className="text-[#64748B]">Kategori:</span>
+                  <span className="text-right">
+                    {selectedTxModal.partnerSubLabel}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <span className="text-[#64748B]">Rincian Item:</span>
+                  <span className="font-semibold text-right">
+                    {selectedTxModal.itemsSummary}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <span className="text-[#64748B]">Keterangan:</span>
+                  <span className="text-right">
+                    {selectedTxModal.itemsSubLabel}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-2 pt-2 border-t border-[#E2E8F0] text-sm font-bold text-[#0F172A]">
+                  <span>Total Nominal:</span>
+                  <span className="font-mono">
+                    {formatRp(selectedTxModal.totalAmountRp)}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <span className="text-[#64748B]">Status Sinkronisasi:</span>
+                  <span className="font-semibold text-[#0F6352]">
+                    {selectedTxModal.statusBadge}
+                  </span>
+                </div>
               </div>
-              <div className="flex justify-between gap-2">
-                <span className="text-[#64748B]">Kategori:</span>
-                <span className="text-right">
-                  {selectedTxModal.partnerSubLabel}
-                </span>
-              </div>
-              <div className="flex justify-between gap-2">
-                <span className="text-[#64748B]">Rincian Item:</span>
-                <span className="font-semibold text-right">
-                  {selectedTxModal.itemsSummary}
-                </span>
-              </div>
-              <div className="flex justify-between gap-2">
-                <span className="text-[#64748B]">Keterangan:</span>
-                <span className="text-right">
-                  {selectedTxModal.itemsSubLabel}
-                </span>
-              </div>
-              <div className="flex justify-between gap-2 pt-2 border-t border-[#E2E8F0] text-sm font-bold text-[#0F172A]">
-                <span>Total Nominal:</span>
-                <span className="font-mono">
-                  {formatRp(selectedTxModal.totalAmountRp)}
-                </span>
-              </div>
-              <div className="flex justify-between gap-2">
-                <span className="text-[#64748B]">Status Sinkronisasi:</span>
-                <span className="font-semibold text-[#0F6352]">
-                  {selectedTxModal.statusBadge}
-                </span>
-              </div>
-            </div>
 
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="min-h-[40px] px-4 py-2 bg-[#0F6352] hover:bg-[#0B4F41] text-white rounded-xl text-xs font-semibold"
-              >
-                {selectedTxModal.actionLabel} (PDF / Termal)
-              </button>
-              <button
-                type="button"
-                onClick={() => setSelectedTxModal(null)}
-                className="min-h-[40px] px-4 py-2 bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#334155] rounded-xl text-xs font-semibold"
-              >
-                Tutup
-              </button>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="min-h-[40px] px-4 py-2 bg-[#0F6352] hover:bg-[#0B4F41] text-white rounded-xl text-xs font-semibold"
+                >
+                  {selectedTxModal.actionLabel} (PDF)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedTxModal(null)}
+                  className="min-h-[40px] px-4 py-2 bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#334155] rounded-xl text-xs font-semibold"
+                >
+                  Tutup
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        ))}
 
       {/* Modal 2: Role Whitelist & Subscription Tier Manager */}
       {showAccessModal && (

@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { formatRp } from "./CommandCenterDashboard";
+import { useConfirmDialog } from "./ConfirmActionModal";
 import { useGooeyToastFlash } from "./GooeyToastProvider";
 
 interface PosCatalogProduct {
@@ -161,6 +162,7 @@ export default function SmartPosView({
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const confirmDialog = useConfirmDialog();
 
   useGooeyToastFlash(null, errorMsg, undefined, () => setErrorMsg(null));
   useGooeyToastFlash(null, qrisUploadError, undefined, () =>
@@ -345,8 +347,22 @@ export default function SmartPosView({
     });
   };
 
-  const handleUpdateQty = (lineKey: string, delta: number) => {
+  const handleUpdateQty = async (lineKey: string, delta: number) => {
     setErrorMsg(null);
+    const existing = cart.find((item) => item.key === lineKey);
+    if (!existing) return;
+    if (existing.soldQty + delta <= 0) {
+      const ok = await confirmDialog({
+        title: "Hapus Produk dari Keranjang?",
+        description:
+          "Jumlah item akan menjadi 0 dan produk ini akan dihapus dari daftar belanja kasir.",
+        detailText: `${existing.productName} (${existing.soldQty} ${existing.unitLabel})`,
+        confirmLabel: "Ya, Hapus Item",
+        cancelLabel: "Batal",
+        variant: "danger",
+      });
+      if (!ok) return;
+    }
     setCart((prev) =>
       prev
         .map((item) => {
@@ -420,6 +436,20 @@ export default function SmartPosView({
       return;
     }
 
+    const ok = await confirmDialog({
+      title: "Perbarui Gambar QRIS Toko?",
+      description:
+        "Gambar kode QRIS toko akan diperbarui dengan file gambar yang Anda pilih.",
+      detailText: `File: ${file.name}`,
+      confirmLabel: "Ya, Perbarui QRIS",
+      cancelLabel: "Batal",
+      variant: "primary",
+    });
+    if (!ok) {
+      e.target.value = "";
+      return;
+    }
+
     setQrisUploading(true);
     try {
       const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -456,6 +486,15 @@ export default function SmartPosView({
   };
 
   const handleRemoveQrisImage = async () => {
+    const ok = await confirmDialog({
+      title: "Hapus Gambar QRIS Toko?",
+      description:
+        "Gambar QRIS kustom akan dihapus dan tampilan kasir akan kembali ke kode QRIS standar.",
+      confirmLabel: "Ya, Hapus QRIS",
+      cancelLabel: "Batal",
+      variant: "danger",
+    });
+    if (!ok) return;
     setQrisUploadError(null);
     setQrisUploading(true);
     try {
@@ -484,6 +523,17 @@ export default function SmartPosView({
   const handleCheckout = async (e: React.FormEvent) => {
     e.preventDefault();
     if (cart.length === 0) return;
+
+    const ok = await confirmDialog({
+      title: "Konfirmasi Proses Transaksi & Potong Stok",
+      description:
+        "Transaksi kasir akan dicatat ke Buku Kas dan stok batch FEFO akan langsung dipotong secara otomatis.",
+      detailText: `${totalCartUnits} item • Total Tagihan: ${formatRp(cartSubtotal)} (${payUiOption})`,
+      confirmLabel: "Ya, Proses Pembayaran",
+      cancelLabel: "Batal",
+      variant: "primary",
+    });
+    if (!ok) return;
 
     setSubmitting(true);
     setErrorMsg(null);
@@ -804,12 +854,39 @@ export default function SmartPosView({
 
             {/* Product Grid */}
             {loading ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-3.5 animate-pulse">
-                {[1, 2, 3, 4].map((n) => (
+              <div
+                className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-3.5 animate-pulse"
+                role="status"
+                aria-busy="true"
+                aria-label="Memuat katalog produk POS..."
+              >
+                {[1, 2, 3, 4, 5, 6].map((n) => (
                   <div
                     key={n}
-                    className="h-44 rounded-2xl bg-[#F8FAFC] border border-[#E5E9EC]"
-                  />
+                    className="rounded-2xl bg-white border border-[#E5E9EC] p-4 space-y-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.03)]"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="space-y-1.5 flex-1">
+                        <div className="h-4 w-3/4 rounded bg-[#E2E8F0]" />
+                        <div className="h-3 w-1/2 rounded bg-[#F1F5F9]" />
+                      </div>
+                      <div className="h-5 w-20 rounded-full bg-[#F1F5F9] shrink-0" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="h-12 rounded-xl bg-[#F8FAFC] border border-[#E5E9EC] p-2 space-y-1">
+                        <div className="h-2.5 w-14 rounded bg-[#E2E8F0]" />
+                        <div className="h-3.5 w-20 rounded bg-[#CBD5E1]" />
+                      </div>
+                      <div className="h-12 rounded-xl bg-[#F8FAFC] border border-[#E5E9EC] p-2 space-y-1">
+                        <div className="h-2.5 w-16 rounded bg-[#E2E8F0]" />
+                        <div className="h-3.5 w-24 rounded bg-[#CBD5E1]" />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 pt-1">
+                      <div className="h-3 w-28 rounded bg-[#F1F5F9]" />
+                      <div className="h-9 w-28 rounded-xl bg-[#D7F0E6]/70" />
+                    </div>
+                  </div>
                 ))}
               </div>
             ) : products.length === 0 ? (

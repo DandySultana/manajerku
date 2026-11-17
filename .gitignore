@@ -39,3 +39,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# botwa runtime session & cache
+/botwa/*.data.json
+/botwa/patches.cache.json
+/botwa/.open-wa/
+/botwa/_IGNORE_*
+/botwa/*.csv

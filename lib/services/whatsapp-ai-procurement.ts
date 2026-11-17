@@ -63,14 +63,17 @@ export function identifyWhatsappSender(
   }
 
   const supplier = db
-    .prepare("SELECT id, name FROM suppliers WHERE phone_whatsapp = ?")
-    .get(normalizedPhone) as { id: string; name: string } | undefined;
+    .prepare("SELECT id, name, store_id FROM suppliers WHERE phone_whatsapp = ?")
+    .get(normalizedPhone) as
+    | { id: string; name: string; store_id: string }
+    | undefined;
 
   if (supplier) {
     return {
       normalizedPhone,
       actorType: "SUPPLIER",
       supplierId: supplier.id,
+      storeId: supplier.store_id || storeId,
       displayName: supplier.name,
     };
   }
@@ -459,21 +462,22 @@ export async function processSupplierRfqReply(params: {
   messageText: string;
   skipOpenWaDispatch?: boolean;
 }) {
-  const storeId = params.storeId || DEFAULT_STORE_ID;
+  const requestedStoreId = params.storeId || DEFAULT_STORE_ID;
   const normalizedPhone = normalizePhoneE164(params.supplierPhone);
   const db = getDb();
 
-  // Locate active RFQ session for this supplier phone
+  // Locate active RFQ session for this supplier phone (prefer requestedStoreId, fallback across stores)
   const rfqRows = db
     .prepare(
       `SELECT r.*, p.name as product_name, p.sku_code
        FROM rfq_sessions r
        JOIN products p ON p.id = r.product_id
-       WHERE r.store_id = ? AND r.status IN ('NEGOTIATING', 'AWAITING_OWNER_PO_APPROVAL')
-       ORDER BY r.rowid DESC`
+       WHERE r.status IN ('NEGOTIATING', 'AWAITING_OWNER_PO_APPROVAL')
+       ORDER BY CASE WHEN r.store_id = ? THEN 0 ELSE 1 END, r.rowid DESC`
     )
-    .all(storeId) as Array<{
+    .all(requestedStoreId) as Array<{
     id: string;
+    store_id: string;
     rfq_code: string;
     product_id: string;
     product_name: string;
@@ -499,6 +503,8 @@ export async function processSupplierRfqReply(params: {
       404
     );
   }
+
+  const storeId = targetRfq.store_id || requestedStoreId;
 
   const quotes = JSON.parse(
     targetRfq.supplier_quotes_json
@@ -536,6 +542,40 @@ export async function processSupplierRfqReply(params: {
       );
 
     const nextTurnCount = currentQuote.turn_count + 1;
+    const rawSnippet = params.messageText.replace(/\s+/g, " ").trim();
+    const replySnippet =
+      rawSnippet.length > 180 ? `${rawSnippet.slice(0, 177)}...` : rawSnippet;
+
+    const ownerUser = txDb
+      .prepare(
+        "SELECT phone_whatsapp FROM users WHERE store_id = ? AND role = 'OWNER' AND is_active = 1 LIMIT 1"
+      )
+      .get(storeId) as { phone_whatsapp: string } | undefined;
+    const ownerPhone: string | null = ownerUser?.phone_whatsapp || null;
+
+    const recordOwnerAlert = (alertText: string) => {
+      if (!ownerUser) return;
+      txDb
+        .prepare(`
+        INSERT INTO whatsapp_messages_log (
+          id, store_id, direction, sender_phone, recipient_phone, detected_role,
+          message_type, content_text, related_rfq_id
+        ) VALUES (?, ?, 'OUTBOUND', 'MANAJERKU_AGENT', ?, 'SYSTEM', 'TEXT', ?, ?)
+      `)
+        .run(
+          `wa-${crypto.randomUUID().slice(0, 8)}`,
+          storeId,
+          ownerUser.phone_whatsapp,
+          alertText,
+          targetRfq.id
+        );
+      if (!params.skipOpenWaDispatch) {
+        void dispatchOpenWaText({
+          toPhone: ownerUser.phone_whatsapp,
+          content: alertText,
+        });
+      }
+    };
 
     if (extracted.is_out_of_stock) {
       quotes[quoteIdx] = {
@@ -550,6 +590,9 @@ export async function processSupplierRfqReply(params: {
         .run(JSON.stringify(quotes), targetRfq.id);
 
       const replyMsg = `Baik Kak (${currentQuote.supplier_name}), terima kasih konfirmasinya. Kami catat stok sedang kosong.`;
+      const ownerNotificationMessage = `Respon Supplier (${targetRfq.rfq_code}): ${currentQuote.supplier_name} (${normalizedPhone}) sudah membalas untuk ${targetRfq.product_name}, namun menginfokan stok sedang kosong.\nPesan: "${replySnippet}"`;
+      recordOwnerAlert(ownerNotificationMessage);
+
       return {
         rfqSessionId: targetRfq.id,
         supplierName: currentQuote.supplier_name,
@@ -557,6 +600,8 @@ export async function processSupplierRfqReply(params: {
         updatedSlotState: quotes[quoteIdx],
         agentReplyToSupplier: replyMsg,
         ownerRecommendationMessage: null,
+        ownerNotificationMessage,
+        ownerPhone,
       };
     }
 
@@ -580,7 +625,6 @@ export async function processSupplierRfqReply(params: {
 
     let agentReplyToSupplier: string;
     let ownerRecommendationMessage: string | null = null;
-    let ownerPhone: string | null = null;
     let rfqNextStatus = targetRfq.status;
 
     if (updatedQuote.status !== "COMPLETE") {
@@ -651,6 +695,8 @@ export async function processSupplierRfqReply(params: {
         return (a.slot_price_per_box ?? 0) - (b.slot_price_per_box ?? 0);
       });
 
+    let ownerNotificationMessage: string;
+
     if (completedQuotes.length > 0) {
       const best = completedQuotes[0];
       const estimatedPoTotal =
@@ -702,41 +748,44 @@ export async function processSupplierRfqReply(params: {
         plafonSafe ? "Aman" : "Melebihi Kas"
       } (${cashUsagePct.toString().replace(".", ",")}% Kas)`;
 
-      const ownerUser = txDb
-        .prepare(
-          "SELECT phone_whatsapp FROM users WHERE store_id = ? AND role = 'OWNER' LIMIT 1"
-        )
-        .get(storeId) as { phone_whatsapp: string } | undefined;
-
-      if (ownerUser) {
-        ownerPhone = ownerUser.phone_whatsapp;
-        txDb
-          .prepare(`
-          INSERT INTO whatsapp_messages_log (
-            id, store_id, direction, sender_phone, recipient_phone, detected_role,
-            message_type, content_text, related_rfq_id
-          ) VALUES (?, ?, 'OUTBOUND', 'MANAJERKU_AGENT', ?, 'SYSTEM', 'TEXT', ?, ?)
-        `)
-          .run(
-            `wa-${crypto.randomUUID().slice(0, 8)}`,
-            storeId,
-            ownerUser.phone_whatsapp,
-            ownerRecommendationMessage,
-            targetRfq.id
-          );
-        if (!params.skipOpenWaDispatch) {
-          void dispatchOpenWaText({
-            toPhone: ownerUser.phone_whatsapp,
-            content: ownerRecommendationMessage,
-          });
-        }
-      }
+      const statusNote =
+        updatedQuote.status === "COMPLETE"
+          ? "sudah mengirim penawaran lengkap"
+          : "sudah membalas (menunggu kelengkapan sisa data)";
+      ownerNotificationMessage = `Respon Supplier (${targetRfq.rfq_code}): *${updatedQuote.supplier_name}* (${normalizedPhone}) ${statusNote}.\nPesan: "${replySnippet}"\n\n${ownerRecommendationMessage}`;
+      recordOwnerAlert(ownerNotificationMessage);
     } else {
       txDb
         .prepare(
           "UPDATE rfq_sessions SET supplier_quotes_json = ? WHERE id = ?"
         )
         .run(JSON.stringify(quotes), targetRfq.id);
+
+      const collectedParts: string[] = [];
+      if (updatedQuote.slot_price_per_box !== null) {
+        collectedParts.push(
+          `Harga Rp ${updatedQuote.slot_price_per_box.toLocaleString("id-ID")}/dus`
+        );
+      }
+      if (updatedQuote.slot_moq_boxes !== null) {
+        collectedParts.push(`MOQ ${updatedQuote.slot_moq_boxes} dus`);
+      }
+      if (updatedQuote.slot_batch_expiry_date !== null) {
+        collectedParts.push(`Exp ${updatedQuote.slot_batch_expiry_date}`);
+      }
+      if (updatedQuote.slot_freezer_delivery !== null) {
+        collectedParts.push(
+          `Freezer: ${updatedQuote.slot_freezer_delivery ? "Ya" : "Tidak"}`
+        );
+      }
+
+      const progressLine =
+        collectedParts.length > 0
+          ? `Data sementara: ${collectedParts.join(", ")}.`
+          : "Agent sudah mengirim follow-up otomatis untuk menanyakan Harga, MOQ, Expired, dan Freezer.";
+
+      ownerNotificationMessage = `Respon Supplier (${targetRfq.rfq_code}): *${updatedQuote.supplier_name}* (${normalizedPhone}) sudah membalas untuk *${targetRfq.product_name}*.\nPesan: "${replySnippet}"\n${progressLine}`;
+      recordOwnerAlert(ownerNotificationMessage);
     }
 
     return {
@@ -747,6 +796,7 @@ export async function processSupplierRfqReply(params: {
       updatedSlotState: updatedQuote,
       agentReplyToSupplier,
       ownerRecommendationMessage,
+      ownerNotificationMessage,
       ownerPhone,
     };
   });

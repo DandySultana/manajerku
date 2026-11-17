@@ -90,6 +90,10 @@ test("PRD-05 Suite: Dual-Role WhatsApp AI Agent, Multi-Turn Auto-RFQ & PO Issuan
       assert.equal(turn1.updatedSlotState.slot_freezer_delivery, null);
       assert.match(turn1.agentReplyToSupplier, /tanggal kedaluwarsa/);
       assert.match(turn1.agentReplyToSupplier, /mobil box freezer/);
+      assert.equal(turn1.ownerPhone, "+6282298606699");
+      assert.ok(turn1.ownerNotificationMessage);
+      assert.match(turn1.ownerNotificationMessage, /Respon Supplier/);
+      assert.match(turn1.ownerNotificationMessage, /Grosir Makmur/);
 
       // 5. Turn 2 from Supplier 2 completes the remaining 2 variables!
       const turn2 = await processSupplierRfqReply({
